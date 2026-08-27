@@ -36,6 +36,16 @@ Common clients that support MCP include Claude Desktop, Cursor, Windsurf, Cline,
 
 After installing or updating an LSP, ask the AI client to call `server_info` again so it can refresh the available language capabilities.
 
+## macOS installation
+
+The current macOS release is unsigned. After dragging `MCPort.app` to `/Applications`, run:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/MCPort.app"
+```
+
+Only do this for the official download after verifying `SHA256SUMS.txt`.
+
 ## Connections
 
 Local access accepts loopback requests by default. Public access can use Cloudflare Tunnel, TryCloudflare, FRP Client, or an external tunnel, with OAuth (recommended) or Bearer Token authentication.

@@ -35,6 +35,16 @@ Claude Desktop、Cursor、Windsurf、Cline、Continue 等常见客户端都支�
 
 安装或更新 LSP 后，请让 AI 重新调用 `server_info`，获取最新支持类型和状态。
 
+## macOS 安装
+
+当前 macOS 版本未签名。将 `MCPort.app` 拖入 `/Applications` 后，在终端执行：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/MCPort.app"
+```
+
+请确认下载来源为官方 Release，并先核对 `SHA256SUMS.txt`。
+
 ## 连接方式
 
 本地访问默认只接受 loopback 请求。公网访问支持 Cloudflare Tunnel、TryCloudflare、FRP Client 或外部自建通道，并使用 OAuth（推荐）或 Bearer Token 认证。
