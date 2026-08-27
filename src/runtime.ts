@@ -73,6 +73,7 @@ async function executableOnRuntimePath(command: string, runtimePath: string): Pr
 async function executionPlan(config: RuntimeExecutionConfig, command: string, args: string[], enforceNetworkPolicy: boolean): Promise<ExecutionPlan> {
   const env = restrictedEnvironment(config);
   if (!enforceNetworkPolicy || config.allowExternalNetwork) return { command, args, env, strategy: 'none' };
+  if (!config.networkIsolationRequired) return { command, args, env, strategy: 'environment' };
 
   if (process.platform === 'darwin' && await isExecutable('/usr/bin/sandbox-exec')) {
     return {
@@ -112,6 +113,7 @@ async function executionPlan(config: RuntimeExecutionConfig, command: string, ar
 
 export async function networkIsolationStatus(config: RuntimeExecutionConfig) {
   if (config.allowExternalNetwork) return { externalNetworkAllowed: true, loopbackNetworkAllowed: true, required: config.networkIsolationRequired, supported: true, strategy: 'none' as const };
+  if (!config.networkIsolationRequired) return { externalNetworkAllowed: false, loopbackNetworkAllowed: true, required: false, supported: true, strategy: 'environment' as const };
   if (process.platform === 'darwin' && await isExecutable('/usr/bin/sandbox-exec')) return { externalNetworkAllowed: false, loopbackNetworkAllowed: true, required: config.networkIsolationRequired, supported: true, strategy: 'sandbox-exec' as const };
   if (process.platform === 'linux') {
     if (await executableOnRuntimePath('bwrap', config.runtimePath)) return { externalNetworkAllowed: false, loopbackNetworkAllowed: false, required: config.networkIsolationRequired, supported: true, strategy: 'bwrap' as const };

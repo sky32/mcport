@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -31,8 +36,14 @@ jobs:
       - name: Core LSP smoke
         run: npm run smoke:core-lsp
       - name: Core tools smoke
+        env:
+          # GitHub-hosted Ubuntu blocks unshare user namespaces. The core
+          # tools smoke exercises tool contracts; sandbox availability is
+          # covered by the runtime safety controls smoke.
+          NETWORK_ISOLATION_REQUIRED: 'false'
         run: npm run smoke:core-tools
       - name: Tool tier smoke
         run: npm run smoke:tool-tiers
       - name: Desktop settings smoke
-        run: npm run smoke:desktop:settings
+        # Electron requires a display on Linux; use the runner's virtual X server.
+        run: xvfb-run -a npm run smoke:desktop:settings
