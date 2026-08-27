@@ -1,0 +1,36 @@
+name: Bug report
+description: 报告一个可复现的问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 请说明实际结果和预期结果。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: MCPort 版本
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 系统与 Node.js 版本
+      placeholder: macOS 15 / Node.js 22.13
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志
+      description: 请删除 Token、私钥、真实路径和其他敏感信息。

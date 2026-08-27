@@ -1,0 +1,37 @@
+import type { z } from 'zod/v4';
+
+export const workspaceNameSchema: z.ZodType<string>;
+export const toolTierSchema: z.ZodType<'readonly' | 'standard' | 'full'>;
+export const workspaceToolTiersSchema: z.ZodType<Record<string, 'readonly' | 'standard' | 'full'>>;
+export const workspaceAllowlistSchema: z.ZodType<string[]>;
+export const positiveIntegerSchema: z.ZodType<number>;
+export const portSchema: z.ZodType<number>;
+export const plainCommandSchema: z.ZodType<string>;
+export const runtimeSettingsShape: Record<string, z.ZodTypeAny>;
+export const runtimeSettingsSchema: z.ZodType<{
+  runtimePath: string;
+  allowedCommands: string[];
+  allowCommandExecution: boolean;
+  allowExternalNetwork: boolean;
+  networkIsolationRequired: boolean;
+  lspEnabled: boolean;
+  lspRequestTimeoutMs: number;
+  lspTypeScriptCommand: string;
+  lspHtmlCommand: string;
+  lspCssCommand: string;
+  lspCustomServers: string;
+  maxFileBytes: number;
+  maxCommandOutputBytes: number;
+  defaultCommandTimeoutMs: number;
+  maxCommandTimeoutMs: number;
+}>;
+export const runtimeSettingsPatchSchema: z.ZodType<Partial<z.infer<typeof runtimeSettingsSchema>>>;
+export const runtimeProfilePatchSchema: z.ZodType<Record<string, unknown>>;
+export const workspaceServiceSchema: z.ZodType<Record<string, unknown>>;
+export const gatewayTokenAuthSchema: z.ZodType<Record<string, unknown>>;
+export const gatewayBuiltinOAuthSchema: z.ZodType<Record<string, unknown>>;
+export const gatewayWorkspaceAuthSchema: z.ZodType<Record<string, unknown>>;
+export const workspaceRegistrySchema: z.ZodType<Record<string, string>>;
+export const additionalServiceSchema: z.ZodType<Record<string, unknown>>;
+export const additionalServicesSchema: z.ZodType<Record<string, unknown>[]>;
+export function parseJsonWithSchema<T>(raw: string, schema: z.ZodType<T>, label: string): T;

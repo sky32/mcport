@@ -1,0 +1,127 @@
+{
+  "name": "mcport",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-desktop/main.js",
+  "author": "Sky",
+  "description": "Generic local workspace runtime exposed over Model Context Protocol.",
+  "appUpdate": {
+    "githubRepository": "sky32/mcport"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "prebuild": "node scripts/check-core-lsp-deps.mjs && npm run check:renderer-i18n",
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "build:desktop": "npm run build && tsc -p tsconfig.desktop.json",
+    "desktop": "npm run build:desktop && electron .",
+    "desktop:dir": "npm run build:desktop && electron-builder --dir",
+    "desktop:mac": "npm run build:desktop && electron-builder --mac dmg",
+    "desktop:mac:x64": "npm run build:desktop && electron-builder --mac dmg --x64",
+    "desktop:mac:arm64": "npm run build:desktop && electron-builder --mac dmg --arm64",
+    "desktop:linux": "npm run build:desktop && electron-builder --linux AppImage",
+    "desktop:dmg": "npm run build:desktop && electron-builder --mac dmg",
+    "desktop:win": "npm run build:desktop && electron-builder --win --x64",
+    "desktop:win:arm64": "npm run build:desktop && electron-builder --win --arm64",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:desktop": "tsc -p tsconfig.desktop.json --noEmit",
+    "check:renderer-i18n": "node scripts/check-renderer-i18n.mjs",
+    "smoke:desktop": "npm run build:desktop && node scripts/desktop-smoke.mjs",
+    "smoke:desktop:port-conflict": "npm run build:desktop && node scripts/desktop-port-conflict-smoke.mjs",
+    "smoke:desktop:runtime-recovery": "npm run build:desktop && node scripts/desktop-runtime-recovery-smoke.mjs",
+    "smoke:desktop:tunnel-recovery": "npm run build:desktop && node scripts/desktop-tunnel-recovery-smoke.mjs",
+    "smoke:desktop:tunnel-preflight-failure": "npm run build:desktop && node scripts/desktop-tunnel-preflight-failure-smoke.mjs",
+    "smoke:desktop:low-memory-tray": "npm run build:desktop && node scripts/desktop-low-memory-tray-smoke.mjs",
+    "smoke:desktop:frp-provider": "npm run build:desktop && node scripts/desktop-frp-provider-smoke.mjs",
+    "smoke:desktop:trycloudflare": "npm run build:desktop && node scripts/desktop-trycloudflare-smoke.mjs",
+    "smoke:desktop:tool-debug": "npm run build:desktop && node scripts/desktop-tool-debug-smoke.mjs",
+    "smoke:desktop:close": "npm run build:desktop && node scripts/desktop-close-smoke.mjs",
+    "smoke:desktop:workspace-services": "npm run build:desktop && node scripts/desktop-workspace-services-smoke.mjs",
+    "smoke:desktop:workspace-atomic-save": "npm run build:desktop && node scripts/desktop-workspace-atomic-save-smoke.mjs",
+    "smoke:desktop:workspace-concurrent-save": "npm run build:desktop && node scripts/desktop-workspace-concurrent-save-smoke.mjs",
+    "smoke:desktop:settings": "npm run build:desktop && node scripts/desktop-settings-smoke.mjs",
+    "smoke:desktop:mcp-flow": "npm run build:desktop && node scripts/desktop-mcp-flow-smoke.mjs",
+    "smoke:desktop:corrupt-storage": "npm run build:desktop && node scripts/desktop-corrupt-storage-smoke.mjs",
+    "smoke:desktop:oauth-builtin": "npm run build:desktop && node scripts/desktop-builtin-oauth-smoke.mjs",
+    "smoke:desktop:managed-binaries": "npm run build:desktop && node scripts/managed-binaries-smoke.mjs",
+    "smoke:gateway": "npm run build && node scripts/gateway-smoke.mjs",
+    "smoke:gateway:json-only": "npm run build && node scripts/gateway-json-only-smoke.mjs",
+    "smoke:oauth:builtin": "npm run build && node scripts/builtin-oauth-smoke.mjs",
+    "smoke:multi-service": "node dist/multi-service-smoke.js",
+    "smoke:tool-tiers": "node dist/tool-tier-smoke.js",
+    "smoke:tool-trace": "npm run build && node scripts/tool-trace-smoke.mjs",
+    "smoke:core-tools": "npm run build && node scripts/core-tools-smoke.mjs",
+    "smoke:patch-validation": "npm run build && node scripts/patch-validation-smoke.mjs",
+    "smoke:agent-runtime": "npm run build && node scripts/agent-runtime-smoke.mjs",
+    "smoke:operation-store": "npm run build && node scripts/operation-store-smoke.mjs",
+    "smoke:safety-controls": "npm run build && node scripts/safety-controls-smoke.mjs",
+    "smoke:core-lsp": "npm run build && node scripts/core-lsp-resolution-smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "execa": "^10.0.1",
+    "glob": "^13.0.6",
+    "jose": "^6.1.0",
+    "oidc-provider": "^9.11.2",
+    "rate-limiter-flexible": "^11.2.0",
+    "tree-sitter-wasms": "0.1.11",
+    "undici": "^7.29.0",
+    "web-tree-sitter": "^0.20.8",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "@types/oidc-provider": "^9.11.1",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
+    "typescript": "^7.0.2"
+  },
+  "build": {
+    "appId": "com.mcport.app",
+    "productName": "MCPort",
+    "asar": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-desktop/**/*",
+      "shared/**/*",
+      "resources/**/*",
+      "desktop/preload.cjs",
+      "desktop/renderer/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "resources/icons/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "target": "dmg"
+    },
+    "win": {
+      "icon": "resources/icons/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "${productName}-${version}-setup-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable-${arch}.${ext}"
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
+  }
+}

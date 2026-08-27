@@ -1,0 +1,72 @@
+name: Release Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            command: npm run desktop:linux
+            artifact: linux
+          - os: macos-latest
+            command: npm run desktop:mac:x64
+            artifact: macos-intel
+          - os: macos-latest
+            command: npm run desktop:mac:arm64
+            artifact: macos-arm64
+          - os: windows-latest
+            command: npm run desktop:win
+            artifact: windows-x64
+          - os: windows-latest
+            command: npm run desktop:win:arm64
+            artifact: windows-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build desktop package
+        run: ${{ matrix.command }}
+      - name: Upload unsigned artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcport-${{ matrix.artifact }}
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Create checksums
+        shell: bash
+        run: sha256sum release/* > release/SHA256SUMS.txt
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release/*

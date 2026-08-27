@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:" />
+    <title>MCPort</title>
+    <link rel="icon" type="image/png" href="./MCPort-Icon.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img class="brand-mark" id="brandLogo" src="./MCPort-Logo-Dark.png" alt="MCPort" />
+        </div>
+        <nav>
+          <button class="nav-item active" data-page="workspaces" data-icon="folder"><span class="nav-label">项目</span><span class="nav-count" id="navWorkspaceCount">0</span></button>
+          <button class="nav-item" data-page="settings" data-icon="settings">设置</button>
+          <button class="nav-item" data-page="logs" data-icon="bug">日志</button>
+          <button class="nav-item ui-hidden" data-page="debug" data-icon="pulse">调试</button>
+        </nav>
+        <div class="sidebar-status" aria-label="运行状态">
+          <div class="sidebar-status-title">状态</div>
+          <div class="sidebar-status-item" id="globalTunnelCard" tabindex="0"><span class="sidebar-status-icon" data-icon="train-front-tunnel"></span><div><span>公网通道</span><strong id="globalTunnelStatus">未运行</strong></div></div>
+          <div class="sidebar-status-item" id="globalHealthCard" tabindex="0"><span class="sidebar-status-icon" data-icon="waypoints"></span><div><span>连接健康</span><strong id="globalHealthStatus">待检查</strong></div></div>
+          <div class="sidebar-status-item" id="globalLatencyCard" tabindex="0"><span class="sidebar-status-icon" data-icon="pulse"></span><div><span>响应延迟</span><strong id="globalLatencyStatus">—</strong></div></div>
+        </div>
+        <div class="sr-only" id="endpoint">Runtime 未启动</div>
+        <div class="sr-only" id="runtimeMeta">Runtime 未启动</div>
+        <div class="sr-only" id="tunnelStatusBadge">未运行</div>
+        <div class="sr-only" id="tunnelRouteSummary">0 个 Workspace 公网入口</div>
+        <div class="sr-only" id="tunnelMeta">公网接入</div>
+        <div class="sidebar-foot"><span id="appVersion">v0.1.0</span><span id="platform">—</span></div>
+      </aside>
+
+      <main class="content">
+        <div class="startup-warning ui-hidden" id="startupWarningBanner" role="alert"><strong>启动检查提示</strong><span id="startupWarningText"></span></div>
+        <section class="page active" id="page-workspaces">
+          <div class="page-head compact">
+            <div><p class="eyebrow">WORKSPACES</p><h1>项目</h1><p class="lead">添加和管理要提供给 AI 客户端使用的本机项目目录。</p></div>
+            <div class="quick-actions"><button class="button primary" id="addExistingWorkspaceButton" data-icon="folder-plus">添加目录…</button><button class="button subtle" id="refreshHealthButton" data-icon="waypoints">检查连接</button></div>
+          </div>
+          <div class="workspace-list" id="workspaceList"></div>
+        </section>
+
+        <section class="page" id="page-settings">
+          <div class="settings-sticky-head">
+            <div class="page-head compact settings-page-head">
+              <div><p class="eyebrow">SETTINGS</p><h1>全局设置</h1><p class="lead">只配置所有 Workspace 共用的基础能力。每个 Workspace 的公网地址、认证和 Runtime 覆盖项请在项目中设置。</p></div>
+              <div class="settings-save-head"><button class="button primary save-primary" id="saveSettingsButton" data-icon="save">保存全部设置 <kbd class="save-shortcut">⌘S</kbd></button><span class="save-status" id="saveStatus">没有未保存的更改</span></div>
+            </div>
+            <div class="settings-tabs" role="tablist" aria-label="设置分类">
+              <button class="settings-tab active" type="button" role="tab" aria-selected="true" data-settings-tab="connection" data-icon="globe"><span>连接与公网</span></button>
+              <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="runtime" data-icon="terminal"><span>运行环境</span></button>
+              <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="app" data-icon="settings"><span>应用</span></button>
+            </div>
+          </div>
+          <div class="form-card">
+            <div class="settings-tab-panel active" data-settings-panel="connection">
+            <div class="form-section">
+              <div class="settings-section-head">
+                <div class="public-access-heading"><div class="settings-title-line"><span class="settings-section-icon" data-icon="globe"></span><h2 data-i18n="settings.publicAccess.title">公网接入</h2></div></div>
+                <div id="publicClientActionField" class="section-action-stack public-client-head-action"><div class="public-client-action-row"><button class="button" id="tunnelActionButton" data-icon="cloud">启动公网客户端</button></div></div>
+              </div>
+              <div class="public-access-common-grid">
+                <div><label>接入方式 <span class="help-tip" tabindex="0" data-help="选择公网接入方式。Cloudflare Tunnel 适合稳定公网；TryCloudflare 无需账号或域名，会生成临时 trycloudflare.com 地址，仅用于测试；FRP 使用自建 frps；外部 / 自建由你维护反向代理。">?</span></label><select id="publicAccessProviderInput"><option value="cloudflare">Cloudflare Tunnel</option><option value="trycloudflare">TryCloudflare（临时）</option><option value="frp">FRP Client</option><option value="external">外部 / 自建</option></select></div>
+                <div id="publicClientModeField"><label>客户端 <span class="help-tip" tabindex="0" data-help="Cloudflare / FRP 共用的客户端管理方式：自动安装更新，或使用本机已有的客户端。">?</span></label><select id="publicClientModeInput"><option value="managed">自动安装/更新</option><option value="custom">使用自定义路径</option></select></div>
+                <div id="publicHostField"><label>公网 Host <span class="help-tip" tabindex="0" data-help="所有 Workspace 共用的公网根域名，例如 k-nas.xyz。FRP 会结合 Subdomain 形成实际入口。TryCloudflare 不需要填写，启动后自动生成随机 trycloudflare.com Host。">?</span></label><input id="tunnelBaseDomainInput" placeholder="例如 k-nas.xyz" /></div>
+              </div>
+              <label class="switch-row public-proxy-toggle"><input id="tunnelProxyEnabledInput" type="checkbox" /><span>公网客户端使用代理 <span class="help-tip" tabindex="0" data-help="开启后，Cloudflare / FRP 客户端会继承网络代理设置；关闭后公网客户端直连，Runtime 和 Desktop 的代理设置不受影响。">?</span></span></label>
+              <div class="tunnel-proxy-status ui-hidden" id="tunnelActionHint"></div>
+              <div class="public-client-manager" id="publicClientVersionField">
+                <div class="public-client-manager-head">
+                  <div class="public-client-manager-title"><strong class="public-client-kind" id="publicClientKindLabel">cloudflared</strong><span>客户端版本管理</span></div>
+                  <div class="public-client-manager-actions"><span class="public-client-inline-status" id="publicClientStatus">未检查</span><button class="button version-action" id="installPublicClientButton" data-icon="download">安装最新版本</button><button class="button subtle ui-hidden version-rollback" id="rollbackPublicClientButton" data-icon="refresh">回滚</button></div>
+                </div>
+                <div class="public-client-install-progress ui-hidden" id="publicClientInstallProgress" aria-live="polite">
+                  <div class="public-client-install-progress-head"><span id="publicClientInstallProgressMessage">准备安装…</span><strong id="publicClientInstallProgressPercent">0%</strong></div>
+                  <div class="public-client-install-progress-track"><span id="publicClientInstallProgressBar"></span></div>
+                </div>
+                <div class="public-client-version-grid">
+                  <div class="public-client-version-item"><span>当前版本</span><strong id="publicClientCurrentVersion">未安装</strong></div>
+                  <div class="public-client-version-item"><span>最新版本</span><div class="version-value-row"><strong id="publicClientLatestVersion">未查询</strong><button class="icon-button compact-icon" id="getLatestPublicClientVersionButton" data-icon="refresh" title="检查更新" aria-label="检查更新"></button></div></div>
+                  <div class="public-client-version-target"><span>安装目标 <span class="help-tip" tabindex="0" data-help="默认跟随官方最新版本；选择指定版本时可安装、切换或回滚到已下载过的 Release。">?</span></span><select id="publicClientVersionModeInput"><option value="latest">最新版本</option><option value="specific">指定版本</option></select></div>
+                  <div class="ui-hidden public-client-specific-inline" id="publicClientSpecificVersionField"><span>指定版本</span><input id="publicClientVersionInput" aria-label="指定版本" placeholder="例如 v0.71.0" /></div>
+                </div>
+                <div class="public-client-notice ui-hidden" id="publicClientInstallNotice"></div>
+              </div>
+              <div id="publicClientPathField" class="ui-hidden"><label>客户端路径 <span class="help-tip" tabindex="0" data-help="Cloudflare 填 cloudflared；FRP 填 frpc。App 仅直接执行该文件，不通过 shell。">?</span></label><input id="publicClientPathInput" placeholder="例如 /opt/homebrew/bin/cloudflared" /></div>
+              <div class="tunnel-settings-form">
+                <div id="cloudflareProviderFields" class="provider-config-card">
+                  <div class="provider-config-title">Cloudflare 配置</div>
+                  <label>Tunnel Token <span class="muted" id="tunnelTokenSavedHint"></span> <span class="help-tip" tabindex="0" data-help="Cloudflare remotely-managed Tunnel Token。留空保存不会覆盖已保存值。">?</span></label><input id="tunnelTokenInput" type="password" placeholder="留空保持当前 Tunnel Token" />
+                </div>
+                <div id="tryCloudflareProviderFields" class="ui-hidden provider-config-card">
+                  <div class="provider-config-title">TryCloudflare Quick Tunnel</div>
+                  <div class="muted">无需 Cloudflare 账号、域名或 Tunnel Token。启动后 cloudflared 会生成随机 <code>*.trycloudflare.com</code> 地址；重启后地址会变化。仅用于测试/开发：无 SLA，最多约 200 个并发请求，并且 Cloudflare 官方说明不支持 SSE。</div>
+                </div>
+                <div id="frpProviderFields" class="ui-hidden provider-config-card">
+                  <div class="provider-config-title">FRP 配置</div>
+                  <div class="grid two form-grid"><div><label>FRP Server <span class="help-tip" tabindex="0" data-help="frps 服务端地址，只填写域名或 IP，不带协议和端口。frpc 会主动连接这个服务器。">?</span></label><input id="frpServerAddrInput" placeholder="frps.demo.com" /></div><div><label>Server Port <span class="help-tip" tabindex="0" data-help="frps 接收客户端连接的 bindPort，必须与服务器端 frps 配置一致；默认示例为 7000。">?</span></label><input id="frpServerPortInput" type="number" min="1" max="65535" value="7000" /></div></div>
+                  <div class="grid two form-grid frp-auth-row"><div><label>FRP Token <span class="muted" id="frpTokenSavedHint"></span> <span class="help-tip" tabindex="0" data-help="frpc 连接 frps 使用的认证 Token。使用系统安全存储加密保存；留空保存不会覆盖已有值。">?</span></label><input id="frpTokenInput" type="password" placeholder="留空保持当前 FRP Token" /></div><div><label>FRP Subdomain <span class="help-tip" tabindex="0" data-help="生成 HTTP 类型的 frpc 代理，例如 mcp；公网入口为 https://mcp.你的公网 Host/w/&lt;workspace&gt;/mcp。FRP 的 transport.tls 只保护 frpc 到 frps 的控制连接，公网 OAuth 仍需要服务器端为该域名提供 HTTPS。">?</span></label><input id="frpSubdomainInput" value="mcp" placeholder="mcp" /></div></div>
+                </div>
+              </div>
+              <div class="gateway-config-card" id="publicGatewayCard">
+                <div class="gateway-config-title-row">
+                  <div class="gateway-config-title" data-i18n="gateway.connectionTitle">公网连接</div>
+                  <button class="button subtle" id="checkPublicAccessButton" data-icon="waypoints"><span data-i18n="gateway.checkPublic">检查公网连接</span></button>
+                </div>
+                <div class="gateway-topology">
+                  <div class="gateway-node local">
+                    <div class="gateway-node-icon" data-icon="server"></div>
+                    <div class="gateway-node-copy"><span data-i18n="gateway.localGateway">本地网关</span><code id="tunnelGatewayOrigin">http://127.0.0.1:47877</code></div>
+                  </div>
+                  <div class="gateway-link" id="publicGatewayLink">
+                    <span class="gateway-link-line"></span>
+                    <span class="gateway-link-icon" data-icon="arrow-left-right"></span>
+                    <span class="gateway-health-badge" id="publicGatewayHealthBadge">未检查</span>
+                  </div>
+                  <div class="gateway-node public">
+                    <div class="gateway-node-icon" data-icon="globe"></div>
+                    <div class="gateway-node-copy"><span data-i18n="gateway.publicHost">公网地址</span><code id="tunnelGatewayHostname">配置公网地址后显示</code></div>
+                  </div>
+                </div>
+                <div class="config-check-status ui-hidden" id="publicAccessCheckStatus"></div>
+              </div>
+            </div>
+            <div class="global-secondary-settings-grid">
+            <div class="form-section secondary-settings-section local-mcp-secondary">
+              <div class="settings-section-head compact-setting-head"><div><div class="settings-title-line"><span class="settings-section-icon" data-icon="server"></span><h2 data-i18n="settings.localMcp.title">本地 MCP</h2><span class="help-tip" tabindex="0" data-help="控制本机 localhost MCP 的默认访问方式。“本机免 Token”只适合本机访问；选择 Bearer Token 后，连接本地默认 MCP 的客户端必须携带全局 MCP Token。该设置不影响各 Workspace 的公网认证。">?</span></div></div></div>
+              <div class="ui-hidden"><label>Runtime 管理端口</label><input id="portInput" type="number" min="1" max="65535" /></div>
+              <div class="form-grid local-mcp-auth-row compact-primary-setting">
+                <div>
+                  <select id="authModeInput" aria-label="本地 MCP 默认认证"><option value="none">本机免 Token</option><option value="token">Bearer Token</option></select>
+                </div>
+              </div>
+              <div id="tokenSection" class="token-settings-block">
+                <label>MCP Token <span class="muted" id="tokenSavedHint"></span> <span class="help-tip" tabindex="0" data-help="全局本地 MCP 使用的 Bearer Token。只在“本地 MCP 默认认证”选择 Bearer Token 时使用，与 Workspace 公网 Token 相互独立。留空保存不会覆盖已经保存的 Token。">?</span></label>
+                <div class="input-row"><input id="tokenInput" type="password" placeholder="留空保持当前 Token" /><button class="button" id="generateTokenButton" data-icon="key">生成</button></div>
+                <p class="hint">Token 使用系统安全存储加密保存，不写入普通设置 JSON。</p>
+              </div>
+            </div>
+            <div class="form-section secondary-settings-section">
+              <div class="settings-section-head compact-setting-head">
+                <div><div class="settings-title-line"><span class="settings-section-icon" data-icon="waypoints"></span><h2 data-i18n="settings.proxy.title">网络代理</h2><span class="help-tip" tabindex="0" data-help="关闭：不使用 App 配置的代理；跟随系统：Desktop 使用操作系统代理；手动代理：使用下方固定 HTTP/HTTPS/SOCKS 代理。">?</span></div></div>
+                <div class="section-action-stack"><button class="button subtle" id="testProxyButton" data-icon="pulse">测试代理</button><span class="save-status" id="proxyTestStatus"></span></div>
+              </div>
+              <div class="grid three form-grid proxy-settings-row compact-primary-setting">
+                <div>
+                  <select id="proxyModeInput" aria-label="代理模式">
+                    <option value="off">关闭</option>
+                    <option value="system">跟随系统</option>
+                    <option value="manual">手动代理</option>
+                  </select>
+                </div>
+                <div id="proxyManualSettings" class="ui-hidden proxy-manual-inline">
+                  <div><label>代理地址 <span class="help-tip" tabindex="0" data-help="例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:7890。必须包含端口；暂不在普通设置中保存代理账号密码。">?</span></label><input id="proxyUrlInput" placeholder="http://127.0.0.1:7890" /></div>
+                  <div><label>绕过代理 <span class="help-tip" tabindex="0" data-help="逗号分隔。localhost、127.0.0.1 和 ::1 会始终绕过代理，避免本地 MCP、Runtime 和 Gateway 健康检查被错误转发。">?</span></label><input id="proxyBypassInput" placeholder="localhost,127.0.0.1,::1" /></div>
+                </div>
+              </div>
+            </div>
+            </div>
+            </div>
+            <div class="settings-tab-panel" data-settings-panel="runtime">
+            <div class="form-section">
+              <div class="settings-section-head"><div><span class="section-kicker">RUNTIME DEFAULTS</span><div class="settings-title-line"><span class="settings-section-icon" data-icon="terminal"></span><h2 data-i18n="settings.runtimeDefaults.title">运行环境默认值</h2><p class="hint" data-i18n="settings.runtimeDefaults.desc">项目未单独覆盖时使用</p></div></div><div class="section-action-stack"><button class="button subtle" id="resetRuntimeSettingsButton" data-icon="refresh"><span data-i18n="settings.runtimeDefaults.reset">恢复运行环境默认值</span></button><span class="save-status" id="runtimeSettingsStatus"></span></div></div>
+              <div class="runtime-defaults-body">
+                  <label><span data-i18n="settings.runtimeDefaults.path">运行环境 PATH</span> <span class="help-tip" tabindex="0" data-help="MCP 执行命令时用于查找可执行文件的 PATH。macOS 从 Finder 启动 App 时通常不会继承终端完整 PATH，因此 Homebrew 等目录需要在这里包含。">?</span></label><textarea id="runtimeConfigPathInput" rows="3"></textarea>
+                  <label><span data-i18n="settings.runtimeDefaults.commands">允许执行的命令（逗号分隔）</span> <span class="help-tip" tabindex="0" data-help="命令白名单。exec_command 只能运行这里列出的纯命令名，不能传入可执行文件路径；即使工具档位为“完整”也不会绕过此白名单。默认覆盖常用编译、测试、包管理和语言工具，但不默认加入 bash、sh、zsh、cmd、PowerShell 等可用于绕过白名单的通用 shell。">?</span></label>
+                  <div class="input-row"><input id="runtimeConfigCommandsInput" placeholder="git,node,npm,npx,pnpm,yarn,bun,python,python3,uv,pytest..." /><button class="button subtle" id="resetAllowedCommandsButton" data-icon="refresh">恢复默认</button></div>
+                  <p class="hint" id="runtimeCommandsHint"></p>
+                  <label class="switch-row"><input id="runtimeNetworkIsolationRequiredInput" type="checkbox" /><span>缺少强网络隔离能力时拒绝执行 <span class="help-tip" tabindex="0" data-help="推荐开启。关闭外部网络后，如果当前系统没有 sandbox-exec、bwrap 或 unshare 等可强制隔离网络的能力，则拒绝启动 AI 控制的命令，而不是退化为仅设置代理环境变量。">?</span></span></label>
+                  <div class="runtime-lsp-card">
+                    <div class="runtime-lsp-head">
+                      <div><strong>LSP 语言智能</strong><p>为 AI 提供代码诊断、定义跳转、引用查找、Hover 和文档符号。每种语言的 LSP 都是独立服务器：按需下载可以减小安装包，并允许单独更新。未安装时不会伪造语义结果，但基础代码索引仍可用。</p></div>
+                      <div class="runtime-lsp-head-actions"><label class="lsp-timeout-control"><span>LSP 超时</span><div class="input-with-suffix"><input id="runtimeLspTimeoutInput" type="number" min="250" /><span>ms</span></div></label><label class="switch-row compact-switch"><input id="runtimeLspEnabledInput" type="checkbox" /><span>启用 LSP</span></label></div>
+                    </div>
+                    <div class="runtime-lsp-basic">
+                      <div class="lsp-resolution-note"><strong>语言服务器下载与更新</strong><span>按语言独立安装；冷门语言可在下方自定义。新增或更新 LSP 后，请告诉 AI 重新调用 <code>server_info</code> 获取最新支持类型。</span></div>
+                      <div id="managedLspProgressBanner" class="lsp-progress-banner" aria-live="polite"></div>
+                      <div id="managedLspList" class="lsp-managed-list"></div>
+                    </div>
+                    <details class="inline-disclosure lsp-advanced">
+                      <summary>高级：添加自定义 LSP</summary>
+                      <p class="hint">用于 Lua、Kotlin、Swift 等未列出的语言。每行填写一个服务器，languageId 同时作为唯一标识。</p>
+                      <div id="customLspEditor" class="custom-lsp-editor"></div>
+                      <button class="button subtle" id="addCustomLspButton" type="button" data-icon="plus">添加一个自定义 LSP</button>
+                      <textarea id="runtimeLspCustomServersInput" hidden></textarea>
+                      <p class="hint">命令填写可执行文件名，不要填写路径；如果服务器不在 Workspace node_modules/.bin，请把所在目录加入上方 Runtime PATH。</p>
+                    </details>
+                  </div>
+                  <div class="grid two form-grid">
+                    <div><label>默认命令超时 ms <span class="help-tip" tabindex="0" data-help="调用命令工具未指定 timeout 时使用的默认超时时间。">?</span></label><input id="runtimeDefaultTimeoutInput" type="number" min="1" /></div>
+                    <div><label>最大命令超时 ms <span class="help-tip" tabindex="0" data-help="客户端即使请求更长 timeout，也会被限制在这个上限内。">?</span></label><input id="runtimeMaxTimeoutInput" type="number" min="1" /></div>
+                    <div><label>最大文件 bytes <span class="help-tip" tabindex="0" data-help="MCP 文件读取工具单次允许读取的最大文件大小，用于避免误读超大文件占用过多内存和上下文。">?</span></label><input id="runtimeMaxFileInput" type="number" min="1" /></div>
+                    <div><label>最大命令输出 bytes <span class="help-tip" tabindex="0" data-help="单次命令保留并返回的 stdout / stderr 最大字节数，超过上限会被截断。">?</span></label><input id="runtimeMaxOutputInput" type="number" min="1" /></div>
+                  </div>
+                </div>
+            </div>
+            </div>
+            <div class="ui-hidden"><input id="workspaceScopeInput" /><textarea id="additionalServicesInput"></textarea><div id="mcpServicesSummary"></div></div>
+            <div class="settings-tab-panel" data-settings-panel="app">
+            <div class="form-section">
+              <div class="settings-section-head"><div><div class="settings-title-line"><span class="settings-section-icon" data-icon="settings"></span><h2 data-i18n="settings.app.title">应用设置</h2><p class="hint" data-i18n="settings.app.desc">控制界面语言、外观、调试和后台行为。</p></div></div></div>
+              <div class="grid three form-grid">
+                <div><label data-i18n="settings.language.label">界面语言</label><select id="uiLanguageInput"><option value="system" data-i18n="settings.language.system">跟随系统</option><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></div>
+                <div><label>外观 <span class="help-tip" tabindex="0" data-help="跟随系统会同步 macOS / Windows 的浅色或深色主题；亮色/暗色会覆盖系统偏好，并同步 Electron 原生菜单与窗口外观。">?</span></label><select id="appearanceInput"><option value="system">跟随系统 · 默认</option><option value="light">亮色</option><option value="dark">暗色</option></select></div>
+                <div><label>调试模式 <span class="help-tip" tabindex="0" data-help="基础：记录 Tool 名称、参数键、Workspace、耗时、结果大小与状态；详细：额外记录脱敏后的参数值。Token、授权口令、私钥、密码等敏感字段始终脱敏。">?</span></label><select id="debugModeInput"><option value="off">关闭 · 默认</option><option value="basic">基础 Trace</option><option value="detailed">详细 Trace</option></select></div>
+              </div>
+              <label class="switch-row"><input id="launchAtLoginInput" type="checkbox" /><span>登录系统时自动启动桌面 App <span class="help-tip" tabindex="0" data-help="把 MCPort 注册为系统登录启动项。Desktop 启动后会自动管理 Runtime，无需单独配置 Runtime 自启动。">?</span></span></label>
+              <label class="switch-row" id="autoStartPublicClientRow"><input id="startTunnelWithRuntimeInput" type="checkbox" /><span>Desktop 启动后自动启动公网客户端 <span class="help-tip" tabindex="0" data-help="Cloudflare / FRP 模式下，在 Runtime 就绪后自动启动对应客户端；外部自建模式不需要此开关。">?</span></span></label>
+              <label class="switch-row"><input id="minimizeToTrayInput" type="checkbox" /><span>关闭窗口时继续在后台运行 <span class="help-tip" tabindex="0" data-help="macOS 会保留顶部菜单栏图标，Windows / Linux 会保留系统托盘图标。关闭主窗口后 Runtime 和公网客户端继续运行；从菜单栏/托盘菜单选择“退出”才会完全停止。">?</span></span></label>
+              <label class="switch-row"><input id="lowMemoryTrayInput" type="checkbox" /><span>后台低内存模式 <span class="help-tip" tabindex="0" data-help="关闭主窗口后销毁 Chromium Renderer，只保留 Main Process、Runtime 和公网客户端；再次点击 macOS 菜单栏图标或 Windows/Linux 托盘图标时重建界面。MCP 服务不会中断。">?</span></span></label>
+            </div>
+            <div class="form-section app-update-section">
+              <div class="settings-section-head"><div><div class="settings-title-line"><span class="settings-section-icon" data-icon="download"></span><h2 data-i18n="appUpdate.title">软件更新</h2><p class="hint" data-i18n="appUpdate.desc">从 GitHub Release 检查 MCPort 的最新版本。</p></div></div></div>
+              <div class="app-update-card">
+                <div><strong id="appUpdateVersion" data-i18n="appUpdate.notChecked">尚未检查</strong><p id="appUpdateStatus" class="hint" data-i18n="appUpdate.checkHint">检查会访问 GitHub，不会上传项目文件或凭据。</p></div>
+                <div class="button-row"><button class="button subtle" id="checkAppUpdateButton" type="button" data-icon="refresh"><span id="checkAppUpdateLabel" data-i18n="appUpdate.check">检查更新</span></button><button class="button" id="openAppUpdateButton" type="button" data-icon="external" disabled><span data-i18n="appUpdate.open">打开 GitHub 下载</span></button></div>
+              </div>
+            </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page" id="page-logs">
+          <div class="page-head compact"><div><p class="eyebrow">RUNTIME LOGS</p><h1>运行日志</h1><p class="lead">查看 Runtime、公网客户端和 Desktop 当前会话输出，错误会自动高亮。</p></div></div>
+          <div class="logs-toolbar">
+            <div class="logs-toolbar-left">
+              <select class="compact-select" id="logFilterInput"><option value="all">全部日志</option><option value="runtime">Runtime</option><option value="tunnel">Tunnel</option><option value="desktop">Desktop</option><option value="errors">仅错误</option></select>
+              <label class="inline-check"><input id="logAutoScrollInput" type="checkbox" checked /><span>自动滚动</span></label>
+              <span class="logs-count" id="logsCount">0 条</span>
+            </div>
+            <div class="button-row">
+              <button class="button subtle" id="copyLogsButton" data-icon="copy">复制当前</button>
+              <button class="button danger ghost-danger" id="clearLogsButton" data-icon="trash">清空</button>
+            </div>
+          </div>
+          <div class="logs" id="logs"><div class="logs-empty">暂无日志</div></div>
+        </section>
+
+        <section class="page" id="page-debug">
+          <div class="page-head compact">
+            <div><p class="eyebrow">MCP TRACE</p><h1>Tool 调试</h1><p class="lead">专注查看 MCP Tool 调用、参数摘要、耗时、结果和错误。详细参数会自动脱敏，不记录 Token、密码、授权口令或私钥。</p></div>
+            <div class="quick-actions"><button class="button" id="refreshDebugButton" data-icon="refresh">刷新</button></div>
+          </div>
+          <div class="debug-summary-card"><span>当前模式</span><strong id="debugModeSummary">关闭</strong><span id="debugTraceSummary">0 条 Trace</span></div>
+          <div class="settings-tabs debug-tabs" role="tablist" aria-label="Tool 调试视图">
+            <button class="settings-tab active" type="button" data-debug-tab="stats" role="tab" aria-selected="true">工具统计</button>
+            <button class="settings-tab" type="button" data-debug-tab="traces" role="tab" aria-selected="false">调用明细</button>
+          </div>
+          <div class="settings-tab-panel debug-tab-panel active" data-debug-panel="stats" role="tabpanel">
+            <div class="settings-section-head debug-section-gap"><div><span class="section-kicker">MCP TOOL STATS</span><div class="settings-title-line"><h2>工具统计</h2><p class="hint">列出全部 MCP Tool 及功能，并按 Tool 查看近 5 次耗时、平均耗时、总次数、最快、最慢和失败次数。</p></div></div></div>
+            <div class="debug-tool-stats" id="debugToolStats"><div class="logs-empty">正在读取 MCP Tool Catalog…</div></div>
+          </div>
+          <div class="settings-tab-panel debug-tab-panel" data-debug-panel="traces" role="tabpanel">
+            <div class="debug-toolbar">
+              <select class="compact-select" id="debugStatusFilterInput" aria-label="调试状态筛选"><option value="all">全部状态</option><option value="ok">仅成功</option><option value="error">仅失败</option></select>
+              <input class="compact-input" id="debugToolFilterInput" placeholder="筛选 Tool 或 Workspace" aria-label="筛选 Tool 或 Workspace" />
+              <div class="button-row">
+                <button class="button subtle" id="copyVisibleDebugButton" data-icon="copy">复制当前列表</button>
+                <button class="button danger ghost-danger" id="clearToolTracesButton" data-icon="trash">清空 Trace</button>
+              </div>
+            </div>
+            <div class="debug-trace-header" aria-hidden="true"><span>时间</span><span>Workspace</span><span>Tool</span><span>耗时</span><span>结果</span><span>状态</span><span></span></div>
+            <div class="debug-traces" id="debugTraces"><div class="logs-empty">调试模式关闭</div></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div class="workspace-settings-inline ui-hidden" id="workspaceSettingsModal" aria-hidden="true">
+      <div class="workspace-inline-body workspace-settings-single-page">
+        <div class="workspace-settings-section workspace-settings-connection">
+          <div class="settings-group">
+            <label class="switch-row public-toggle"><input id="currentWorkspacePublicEnabledInput" type="checkbox" /><span><strong><span>启用公网 MCP</span><span class="help-tip" tabindex="0" data-help="开启后默认使用 OAuth。公网 Host 与公网客户端仍由全局设置统一管理。">?</span></strong><small>推荐 OAuth；开启后直接复制 MCP 地址到客户端</small></span></label>
+            <div id="workspacePublicSettings" class="ui-hidden">
+              <div id="workspaceBuiltinOauthAuthSection" class="ui-hidden">
+                <div class="workspace-oauth-primary-actions">
+                  <button class="button primary" id="copyWorkspaceOauthMcpButton" data-icon="copy">复制 MCP 地址</button>
+                  <button class="button" id="copyWorkspaceOauthSecretButton" data-icon="key">复制授权密钥</button>
+                  <span>客户端打开浏览器授权页后，MCPort 也会自动弹出“复制授权密钥”提示。</span>
+                </div>
+                <details class="inline-disclosure workspace-oauth-management">
+                  <summary>OAuth 管理与协议详情</summary>
+                  <div class="oauth-summary-box">
+                    <div class="oauth-summary-item oauth-summary-issuer"><span>Issuer</span><code id="workspaceBuiltinOauthIssuer">保存公网地址后自动生成</code></div>
+                    <div class="oauth-summary-item"><span>Scope</span><code>mcp</code></div>
+                    <div class="oauth-summary-item"><span>Client</span><code>CIMD + DCR fallback</code></div>
+                    <div class="oauth-summary-item"><span>Token</span><code>ES256 JWT · Refresh 轮换</code></div>
+                  </div>
+                  <div class="oauth-secret-actions"><button class="button" id="regenerateWorkspaceOauthSecretButton" data-icon="refresh">重新生成授权密钥</button><button class="button danger ghost-danger" id="revokeWorkspaceOauthAuthorizationsButton" data-icon="undo-2">撤销此 Workspace 全部授权</button></div>
+                </details>
+              </div>
+              <div id="workspaceTokenAuthSection" class="ui-hidden">
+                <div class="workspace-oauth-primary-actions workspace-token-primary-actions">
+                  <button class="button primary" id="copyWorkspaceTokenMcpButton" data-icon="copy">复制 MCP 地址</button>
+                  <button class="button" id="copyWorkspaceTokenButton" data-icon="key">复制 Bearer Token</button>
+                  <span>Bearer Token 与 OAuth 使用相同的 Workspace 公网地址；重置后旧 Token 会立即失效。</span>
+                </div>
+                <details class="inline-disclosure workspace-token-management">
+                  <summary>Bearer Token 管理与认证详情</summary>
+                  <div class="oauth-summary-box">
+                    <div class="oauth-summary-item oauth-summary-issuer"><span>Scheme</span><code>Authorization: Bearer &lt;token&gt;</code></div>
+                    <div class="oauth-summary-item"><span>范围</span><code>当前 Workspace</code></div>
+                    <div class="oauth-summary-item"><span>存储</span><code id="workspaceTokenSavedHint">尚未设置</code></div>
+                    <div class="oauth-summary-item"><span>轮换</span><code>重置后旧 Token 失效</code></div>
+                  </div>
+                  <div class="oauth-secret-actions">
+                    <button class="button" id="generateWorkspaceTokenButton" data-icon="refresh">重新生成 Bearer Token</button>
+                  </div>
+                  <details class="inline-disclosure workspace-token-custom">
+                    <summary>手动设置自定义 Token</summary>
+                    <div class="input-row"><input id="currentWorkspaceTokenInput" type="password" placeholder="留空保持当前 Token；输入后保存设置即可替换" /></div>
+                  </details>
+                </details>
+              </div>
+              <details class="inline-disclosure workspace-connection-advanced">
+                <summary>认证方式与连接高级设置</summary>
+                <div class="workspace-public-core-grid">
+                  <div class="workspace-public-route-field">
+                    <label>公网路径 <span class="help-tip" tabindex="0" data-help="控制公网地址中的 /w/<path>/mcp 部分。默认使用 Workspace 名称。">?</span></label>
+                    <div class="public-route-input"><span class="public-route-host" id="currentWorkspacePublicHostPrefix">https://公网 Host/w/</span><input id="currentWorkspacePublicPathInput" /><span>/mcp</span></div>
+                  </div>
+                  <div class="workspace-public-auth-field">
+                    <label>公网认证</label>
+                    <select id="currentWorkspacePublicAuthModeInput"><option value="oauth">OAuth（推荐）</option><option value="token">Bearer Token</option></select>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+        <details class="inline-disclosure workspace-advanced-settings">
+          <summary>高级设置 · 工具权限 / 本机命令 / 运行环境</summary>
+          <div class="workspace-advanced-settings-body">
+            <div class="workspace-settings-section workspace-settings-tools">
+              <div class="settings-group">
+                <div class="settings-group-head workspace-section-head"><div class="settings-title-line"><span class="settings-section-icon" data-icon="key"></span><h3>工具权限</h3><p class="hint">低频调整。公网模型默认还会经过精简的 core Tool Surface。</p></div></div>
+                <div class="workspace-security-summary" id="workspaceSecuritySummary"><span>当前安全状态</span><strong id="workspaceSecurityLabel">—</strong><small id="workspaceSecurityDetail"></small></div>
+                <label>工具档位</label>
+                <select id="currentWorkspaceToolTierInput"><option value="readonly">只读 · 浏览、搜索、状态检查</option><option value="standard">标准 · 只读 + 文件/目录写入</option><option value="full">完整 · 标准 + 命令和进程执行</option></select>
+                <p class="hint" id="workspaceToolTierHint">完整：内部能力完整；公网模型仍使用精简 Tool Surface。</p>
+              </div>
+            </div>
+            <div class="workspace-settings-section workspace-settings-runtime">
+              <div class="settings-group">
+                <div class="settings-group-head workspace-section-head"><div class="settings-title-line"><span class="settings-section-icon" data-icon="terminal"></span><h3>运行环境</h3><p class="hint">仅在需要开放本机命令、联网或覆盖 Runtime 默认值时调整。</p></div></div>
+                <input class="ui-hidden" id="currentWorkspaceProfileNameInput" placeholder="Workspace Runtime" />
+                <div class="workspace-project-permissions">
+                  <label class="switch-row"><input id="currentWorkspaceExecutionInput" type="checkbox" /><span>允许 MCP 执行本机命令</span></label>
+                  <label class="switch-row"><input id="currentWorkspaceExternalNetworkInput" type="checkbox" /><span>允许 MCP 命令访问外部网络</span></label>
+                  <div><label>高风险确认方式</label><select id="currentWorkspaceHighRiskConfirmationModeInput"><option value="local">MCPort 本地确认（推荐）</option><option value="none">不需要确认</option></select></div>
+                </div>
+                <details class="inline-disclosure"><summary>Runtime 覆盖与限制</summary><label>运行环境 PATH</label><textarea id="currentWorkspaceRuntimePathInput" rows="2" placeholder="留空继承全局默认"></textarea><label>允许执行的命令</label><input id="currentWorkspaceCommandsInput" placeholder="留空继承全局" /><div class="grid three form-grid"><div><label>默认超时 ms</label><input id="currentWorkspaceDefaultTimeoutInput" type="number" placeholder="继承" /></div><div><label>最大超时 ms</label><input id="currentWorkspaceMaxTimeoutInput" type="number" placeholder="继承" /></div><div><label>最大输出 bytes</label><input id="currentWorkspaceMaxOutputInput" type="number" placeholder="继承" /></div></div></details>
+              </div>
+            </div>
+          </div>
+        </details>
+      </div>
+      <div class="workspace-inline-save-head settings-save-head"><span class="save-status" id="currentWorkspaceStatus"></span><button class="button primary" id="saveCurrentWorkspaceButton" data-icon="save"><span>保存设置</span> <kbd class="save-shortcut">⌘S</kbd></button></div>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script src="./i18n.js"></script>
+    <script src="./vendor/lucide-icons.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

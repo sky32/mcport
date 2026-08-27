@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck Runtime
+        run: npm run typecheck
+      - name: Typecheck Desktop
+        run: npm run typecheck:desktop
+      - name: Build
+        run: npm run build
+      - name: Core LSP smoke
+        run: npm run smoke:core-lsp
+      - name: Core tools smoke
+        run: npm run smoke:core-tools
+      - name: Tool tier smoke
+        run: npm run smoke:tool-tiers
+      - name: Desktop settings smoke
+        run: npm run smoke:desktop:settings

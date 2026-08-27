@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-desktop/
+release/
+.env
+workspaces/
+data/
+docs/history-session/
+.DS_Store
+.venv-resources/
+*.log
+.tmp-cloudflared/
