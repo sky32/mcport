@@ -6,7 +6,8 @@
   </picture>
 </p>
 
-<p align="center">Local-first MCP Workspace tool for safely connecting AI to your projects.<br>本地优先的 MCP Workspace 工具，让 AI 安全连接、理解和操作你的项目。</p>
+<p align="center">Local-first MCP Workspace tool for safely connecting AI to your projects.</p>
+<p align="center">本地优先的 MCP Workspace 工具，让 AI 安全连接、理解和操作你的项目。</p>
 
 # MCPort
 
