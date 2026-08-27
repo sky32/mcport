@@ -6,89 +6,86 @@
   </picture>
 </p>
 
-<p align="center">Local-first MCP Workspace tool for safely connecting AI to your projects.</p>
 <p align="center">本地优先的 MCP Workspace 工具，让 AI 安全连接、理解和操作你的项目。</p>
 
 # MCPort
 
-MCPort is a local-first MCP tool for working with projects through AI. It lets an AI client read code, search files, understand symbols, inspect Git, edit files, and—when explicitly authorized—run controlled development commands inside selected Workspaces.
+MCPort 是一个本地优先的 MCP 工具。它让 AI 客户端能够在你明确选择的项目目录中读取代码、搜索文件、理解符号、查看 Git、修改文件，并在授权后执行受控命令。
 
-Project files, runtime state, and credentials stay on your machine by default. You can use MCP locally or enable OAuth/Bearer Token access for selected Workspaces over the public internet.
+项目文件、运行状态和凭据默认留在本机。你可以只使用本地 MCP，也可以为指定 Workspace 开启 OAuth 或 Bearer Token 公网访问。
 
-中文说明：[README.zh-CN.md](README.zh-CN.md)
+## 主要功能
 
-## Features
+- 让 AI 阅读和搜索项目文件、代码、图片及目录
+- 提供代码索引、定义跳转、引用查找、Hover 和文档符号
+- 查看 Git 状态、差异、提交记录和 blame
+- 在 Workspace 内创建、修改、导入、复制、移动和删除文件
+- 通过任务、Checkpoint 和验证流程跟踪修改结果
+- 在权限允许时执行受控开发命令
+- 将一个或多个 Workspace 连接到本地或公网 MCP 客户端
+- 按需安装和更新常见语言的 LSP，冷门语言可手动扩展
 
-- Read and search project files, source code, images, and directories
-- Code indexing plus definition, reference, Hover, and document-symbol support
-- Git status, diffs, history, and blame
-- Contained file creation, editing, import, copy, move, and deletion
-- Checkpoints, tasks, validation, and recovery for file changes
-- Controlled command execution with allowlists, timeouts, output limits, and local confirmation
-- Local or public MCP access for one or more Workspaces
-- Per-language LSP installation and updates, with custom server support
+## 连接 AI 客户端
 
-## Connect an AI client
+在 MCPort 的“项目”中添加项目目录，开启 Workspace 的 MCP 开关，然后复制连接信息。将 MCPort 提供的地址添加到 AI 客户端的 MCP 设置中。公网连接请使用 Workspace 的公网地址，并按设置使用 OAuth 或 Bearer Token。
 
-In MCPort, add a project under **Projects**, enable MCP for the Workspace, then copy its connection information. Add the copied MCP address to your AI client’s MCP settings. For public access, use the Workspace public address and its configured OAuth or Bearer Token authentication.
+Claude Desktop、Cursor、Windsurf、Cline、Continue 等常见客户端都支持 MCP。不同客户端的设置位置和格式可能不同，请按照客户端当前的 MCP 文档操作，并粘贴 MCPort 提供的地址或配置。
 
-Common clients that support MCP include Claude Desktop, Cursor, Windsurf, Cline, Continue, and other MCP-compatible clients. Their settings locations and configuration formats vary; follow the client’s current MCP documentation and paste the address or configuration supplied by MCPort.
+安装或更新 LSP 后，请让 AI 重新调用 `server_info`，获取最新支持类型和状态。
 
-After installing or updating an LSP, ask the AI client to call `server_info` again so it can refresh the available language capabilities.
+## macOS 安装
 
-## macOS installation
-
-The current macOS release is unsigned. After dragging `MCPort.app` to `/Applications`, run:
+当前 macOS 版本未签名。将 `MCPort.app` 拖入 `/Applications` 后，在终端执行：
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/MCPort.app"
 ```
 
-Only do this for the official download after verifying `SHA256SUMS.txt`.
+请确认下载来源为官方 Release，并先核对 `SHA256SUMS.txt`。
 
-## Connections
+## 连接方式
 
-Local access accepts loopback requests by default. Public access can use Cloudflare Tunnel, TryCloudflare, FRP Client, or an external tunnel, with OAuth (recommended) or Bearer Token authentication.
+本地访问默认只接受 loopback 请求。公网访问支持 Cloudflare Tunnel、TryCloudflare、FRP Client 或外部自建通道，并使用 OAuth（推荐）或 Bearer Token 认证。
 
-Public Workspaces use routes like:
+公网地址使用 `/w/<workspace>/mcp` 路由，例如：
 
 ```text
-https://mcp.example.com/w/<workspace>/mcp
+https://mcp.example.com/w/my-project/mcp
 ```
 
-## Files, code, and LSP
+## 文件、代码和 LSP
 
-File operations remain inside the selected Workspace after realpath and symlink checks. The built-in code index supports TypeScript, TSX, JavaScript, JSX, MJS, and CJS.
+MCPort 只允许在选定 Workspace 内操作文件，并会在真实路径和符号链接解析后再次检查边界。基础代码索引支持 TypeScript、TSX、JavaScript、JSX、MJS 和 CJS。
 
-Language servers are managed independently and can be installed or updated on demand. Supported languages include TypeScript/JavaScript, HTML, CSS/SCSS/LESS, Python, JSON, YAML, Markdown, Go, Rust, Java, C, C++, and PHP. Custom LSP definitions can be added for other languages.
+语言服务器按语言独立管理，可以按需下载和更新。支持 TypeScript/JavaScript、HTML、CSS/SCSS/LESS、Python、JSON、YAML、Markdown、Go、Rust、Java、C、C++ 和 PHP，也可以添加自定义 LSP。
 
-## Permission tiers
+## 权限档位
 
-- `readonly`: project browsing, search, code understanding, read-only Git, and history
-- `standard`: file changes, imports, checkpoints, tasks, and quick validation
-- `full`: controlled commands, command sessions, recovery, and complete validation
+- `readonly`：查看项目、搜索、代码理解、Git 只读和历史查询
+- `standard`：增加文件修改、导入、Checkpoint、任务和快速验证
+- `full`：增加受控命令、命令会话、操作恢复和完整验证
 
-Commands use an executable name plus an argument array, never an arbitrary shell string. They remain subject to the global command switch, exact allowlist, timeouts, output limits, and high-risk confirmation.
+命令以 executable + args 数组执行，不使用任意 shell 字符串，并继续受全局开关、精确命令白名单、超时、输出大小和高风险确认控制。
 
-## Security
+## 安全边界
 
-Workspace boundaries are checked after resolving real paths and symlinks. File changes support SHA256 baselines, transactional rollback, and checkpoints. Public Workspaces always require authentication. Tokens, tunnel credentials, and other secrets use system secure storage and are redacted from logs and traces.
+Workspace 文件操作经过 realpath 和符号链接边界检查。文件修改支持 SHA256 前置校验、事务回滚和 Checkpoint。公网 Workspace 始终要求认证。Token、Tunnel 凭据和其他敏感信息使用系统安全存储，并在日志和 Tool Trace 中脱敏。
 
-The Runtime runs as the logged-in OS user. The command allowlist is not an operating-system sandbox.
+Runtime 以当前登录用户运行；命令白名单不是操作系统级沙箱。
 
-## Documentation
+## 文档
 
-- [Desktop guide](docs/desktop-app.md)
-- [AI client guide](docs/ai-usage.md)
-- [MCP tools](docs/tools.md)
-- [LSP guide](docs/lsp.md)
-- [Security](docs/security.md)
-- [Public gateway and OAuth](docs/architecture/public-gateway-and-oauth.md)
-- [Tools and permissions](docs/architecture/tools-and-execution.md)
-- [Release guide](docs/releasing.md)
+- [Desktop 使用指南](docs/desktop-app.md)
+- [AI 客户端使用指南](docs/ai-usage.md)
+- [MCP 工具目录](docs/tools.md)
+- [LSP 语言服务器说明](docs/lsp.md)
+- [安全说明](docs/security.md)
+- [公网接入与 OAuth](docs/architecture/public-gateway-and-oauth.md)
+- [工具与权限](docs/architecture/tools-and-execution.md)
+- [发布指南](docs/releasing.md)
 
-## Contributing
+## 开源协作
 
-MCPort is maintained by Sky and released under the MIT License. Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [privacy notes](docs/privacy.md), and [third-party notices](THIRD_PARTY_NOTICES.md).
+MCPort 由 Sky 维护，采用 MIT License。欢迎提交 Issue 和 Pull Request。详见 [贡献指南](CONTRIBUTING.md)、[安全政策](SECURITY.md)、[行为准则](CODE_OF_CONDUCT.md)、[隐私说明](docs/privacy.md) 和 [第三方许可说明](THIRD_PARTY_NOTICES.md)。
 
-Third-party LSPs are installed from their own official package managers or release channels and are not bundled with MCPort. Follow each project’s license and terms.
+第三方 LSP 按用户选择从各自生态的官方包管理器或发布渠道安装，不随 MCPort 安装包分发；使用时请遵守各项目的许可证和条款。
