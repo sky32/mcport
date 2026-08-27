@@ -84,7 +84,7 @@
   "build": {
     "appId": "com.mcport.app",
     "productName": "MCPort",
-    "asar": false,
+    "asar": true,
     "directories": {
       "output": "release"
     },
