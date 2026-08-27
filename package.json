@@ -75,7 +75,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.2.0",
     "@types/oidc-provider": "^9.11.1",
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
