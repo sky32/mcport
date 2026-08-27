@@ -42,9 +42,30 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Verify macOS signing credentials
+        if: runner.os == 'macOS'
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          test -n "$CSC_LINK" || { echo "Missing MACOS_CSC_LINK"; exit 1; }
+          test -n "$CSC_KEY_PASSWORD" || { echo "Missing MACOS_CSC_KEY_PASSWORD"; exit 1; }
+          test -n "$APPLE_ID" || { echo "Missing APPLE_ID"; exit 1; }
+          test -n "$APPLE_APP_SPECIFIC_PASSWORD" || { echo "Missing APPLE_APP_SPECIFIC_PASSWORD"; exit 1; }
+          test -n "$APPLE_TEAM_ID" || { echo "Missing APPLE_TEAM_ID"; exit 1; }
       - name: Build desktop package
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: ${{ matrix.command }}
-      - name: Upload unsigned artifacts
+      - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mcport-${{ matrix.artifact }}
