@@ -21,18 +21,15 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-macOS 面向普通用户发布前必须配置签名和公证凭据。Release 工作流会在 macOS job 开始时检查这些凭据，缺失时直接失败，不再发布会被 Gatekeeper 判定为“文件已损坏”的未签名 DMG。
+当前 Release 使用未签名 macOS DMG。由于没有 Apple Developer 证书，用户首次打开时需要手动移除下载隔离属性；DMG 中不能自动运行脚本绕过 macOS 安全检查。
 
-需要在 GitHub Actions Secrets 中配置：
+安装步骤：将 `MCPort.app` 拖入 `/Applications`，然后在终端执行：
 
-- `MACOS_CSC_LINK`：Developer ID Application `.p12` 证书的 Base64 内容
-- `MACOS_CSC_KEY_PASSWORD`：`.p12` 证书密码
-- `APPLE_ID`：Apple Developer 账号
-- `APPLE_APP_SPECIFIC_PASSWORD`：用于公证的 App 专用密码
-- `APPLE_TEAM_ID`：Apple Developer Team ID
-- Windows 代码签名证书及对应密码（如启用 Windows 签名）
+```bash
+xattr -dr com.apple.quarantine "/Applications/MCPort.app"
+```
 
-凭据只来自 GitHub Actions Secrets，不写入仓库或 workflow 文件。当前更新流程不会在后台替换正在运行的 App；正式启用自动安装前，还需完成签名、公证和可回滚的更新策略。
+仅对从可信 Release 下载并通过 SHA256 校验的文件执行此操作。以后如果配置 Apple Developer 签名和公证，便可以移除这一步。
 
 未配置签名时，macOS Gatekeeper 和 Windows SmartScreen 可能显示安全警告。不要把证书、私钥、Apple 密码或 token 写进仓库或 workflow 文件。
 
