@@ -18,19 +18,19 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            command: npm run desktop:linux
+            command: npm run build:desktop && npx electron-builder --linux AppImage --publish never
             artifact: linux
           - os: macos-latest
-            command: npm run desktop:mac:x64
+            command: npm run build:desktop && npx electron-builder --mac dmg --x64 --publish never
             artifact: macos-intel
           - os: macos-latest
-            command: npm run desktop:mac:arm64
+            command: npm run build:desktop && npx electron-builder --mac dmg --arm64 --publish never
             artifact: macos-arm64
           - os: windows-latest
-            command: npm run desktop:win
+            command: npm run build:desktop && npx electron-builder --win --x64 --publish never
             artifact: windows-x64
           - os: windows-latest
-            command: npm run desktop:win:arm64
+            command: npm run build:desktop && npx electron-builder --win --arm64 --publish never
             artifact: windows-arm64
     steps:
       - name: Checkout
