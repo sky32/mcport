@@ -45,4 +45,5 @@ jobs:
       - name: Tool tier smoke
         run: npm run smoke:tool-tiers
       - name: Desktop settings smoke
-        run: npm run smoke:desktop:settings
+        # Electron requires a display on Linux; use the runner's virtual X server.
+        run: xvfb-run -a npm run smoke:desktop:settings
