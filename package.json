@@ -68,13 +68,13 @@
     "@nut-tree-fork/libnut-win32": "^2.7.5",
     "execa": "^10.0.1",
     "glob": "^13.0.6",
-    "jose": "^6.1.0",
+    "jose": "^6.2.10",
     "lucide": "^1.35.0",
-    "oidc-provider": "^9.11.2",
+    "oidc-provider": "^9.11.5",
     "rate-limiter-flexible": "^11.2.0",
-    "tree-sitter-wasms": "0.1.11",
-    "undici": "^7.29.0",
-    "web-tree-sitter": "^0.20.8",
+    "tree-sitter-wasms": "0.1.13",
+    "undici": "^8.10.0",
+    "web-tree-sitter": "^0.26.13",
     "zod": "^4.0.0"
   },
   "devDependencies": {
