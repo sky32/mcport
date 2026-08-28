@@ -37,7 +37,7 @@ await chmod(fakeCloudflared, 0o755);
 const port = await freePort();
 
 await writeFile(path.join(dataDir, 'desktop-settings.json'), `${JSON.stringify({
-  settingsVersion: 16,
+  settingsVersion: 19,
   workspaceRoot,
   registeredWorkspaces: [],
   selectedWorkspace: '',

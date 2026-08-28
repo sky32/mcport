@@ -40,18 +40,26 @@ try {
     arguments: { detail: 'summary' },
     invoke: async () => ({ ok: true }),
   });
+  await traceToolCall({
+    serviceId: 'smoke',
+    workspace: 'workspace-a',
+    tool: 'computer_use',
+    arguments: { action: 'type', text: 'desktop-input-must-not-be-persisted' },
+    invoke: async () => ({ ok: true }),
+  });
   let lines = [];
   const deadline = Date.now() + 2_000;
-  while (Date.now() < deadline && lines.length < 3) {
+  while (Date.now() < deadline && lines.length < 4) {
     lines = await readFile(traceFile, 'utf8').then((value) => value.split(/\r?\n/).filter(Boolean)).catch(() => []);
     if (lines.length < 3) await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  if (lines.length < 3) throw new Error('Trace write queue did not flush in time');
+  if (lines.length < 4) throw new Error('Trace write queue did not flush in time');
   const line = lines.find((value) => JSON.parse(value).tool === 'sensitive_tool');
   const errorLine = lines.find((value) => JSON.parse(value).tool === 'failing_tool');
   if (!line || !errorLine) throw new Error(`Expected trace records missing: ${lines.join('\n')}`);
   const record = JSON.parse(line);
   const errorRecord = JSON.parse(errorLine);
+  const computerRecord = lines.map((value) => JSON.parse(value)).find((value) => value.tool === 'computer_use');
   if (record.arguments.token !== '[REDACTED]' || record.arguments.nested.authorization !== '[REDACTED]' || record.arguments.nested.password !== '[REDACTED]') {
     throw new Error(`Sensitive Tool Trace arguments were not redacted: ${line}`);
   }
@@ -64,6 +72,7 @@ try {
   if (record.status !== 'ok' || !(record.resultBytes > 0) || typeof record.durationMs !== 'number') throw new Error(`Trace metrics missing: ${line}`);
   if (errorRecord.status !== 'error' || !String(errorRecord.error).startsWith('[Error ') || !String(errorRecord.error).includes('sha256:')) throw new Error(`Trace error message was not summarized safely: ${errorLine}`);
   if (errorLine.includes('Bearer-error-secret') || errorLine.includes('error-token') || errorLine.includes('error-password')) throw new Error(`Trace error persisted plaintext secret material: ${errorLine}`);
+  if (computerRecord?.arguments?.text !== '[REDACTED]' || lines.some((value) => value.includes('desktop-input-must-not-be-persisted'))) throw new Error('Computer Use typed text was not redacted from Tool Trace');
   const stats = JSON.parse(await readFile(`${traceFile}.stats.json`, 'utf8'));
   if (stats?.tools?.sensitive_tool?.total !== 1 || stats?.tools?.sensitive_tool?.failures !== 0 || stats?.tools?.failing_tool?.total !== 1 || stats?.tools?.failing_tool?.failures !== 1) {
     throw new Error(`Tool Trace aggregate totals are invalid: ${JSON.stringify(stats)}`);
@@ -76,7 +85,7 @@ try {
   }
   const taskGetRecord = lines.map((value) => JSON.parse(value)).find((value) => value.tool === 'workspace_context');
   if (taskGetRecord?.operation !== 'summary') throw new Error(`Tool Trace operation label missing: ${JSON.stringify(taskGetRecord)}`);
-  console.log(JSON.stringify({ ok: true, checks: ['tool_trace_sensitive_argument_redaction', 'tool_trace_content_hash_summary', 'tool_trace_raw_history_hash_summary', 'tool_trace_command_flag_redaction', 'tool_trace_error_hash_summary', 'tool_trace_result_body_not_persisted', 'tool_trace_duration_and_result_bytes', 'tool_trace_persistent_aggregate_stats', 'tool_trace_operation_aggregate'] }, null, 2));
+  console.log(JSON.stringify({ ok: true, checks: ['tool_trace_sensitive_argument_redaction', 'computer_use_typed_text_redaction', 'tool_trace_content_hash_summary', 'tool_trace_raw_history_hash_summary', 'tool_trace_command_flag_redaction', 'tool_trace_error_hash_summary', 'tool_trace_result_body_not_persisted', 'tool_trace_duration_and_result_bytes', 'tool_trace_persistent_aggregate_stats', 'tool_trace_operation_aggregate'] }, null, 2));
 } finally {
   await rm(root, { recursive: true, force: true });
 }

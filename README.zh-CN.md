@@ -26,6 +26,7 @@ English version: [README.md](README.md)
 - 在权限允许时执行受控开发命令
 - 将一个或多个 Workspace 连接到本地或公网 MCP 客户端
 - 按需安装和更新常见语言的 LSP，冷门语言可手动扩展
+- 可选的 Computer Use，通过逐次确认安全地查看屏幕和操作鼠标键盘
 
 ## 连接 AI 客户端
 
@@ -57,7 +58,7 @@ https://mcp.example.com/w/my-project/mcp
 
 ## 文件、代码和 LSP
 
-MCPort 只允许在选定 Workspace 内操作文件，并会在真实路径和符号链接解析后再次检查边界。基础代码索引支持 TypeScript、TSX、JavaScript、JSX、MJS 和 CJS。
+MCPort 只允许在选定 Workspace 内操作文件，并会在真实路径和符号链接解析后再次检查边界。基础代码索引支持 TypeScript/JavaScript、Python、Go、Rust、Java、C/C++ 和 PHP。
 
 语言服务器按语言独立管理，可以按需下载和更新。支持 TypeScript/JavaScript、HTML、CSS/SCSS/LESS、Python、JSON、YAML、Markdown、Go、Rust、Java、C、C++ 和 PHP，也可以添加自定义 LSP。
 
@@ -68,6 +69,8 @@ MCPort 只允许在选定 Workspace 内操作文件，并会在真实路径和�
 - `full`：增加受控命令、命令会话、操作恢复和完整验证
 
 命令以 executable + args 数组执行，不使用任意 shell 字符串，并继续受全局开关、精确命令白名单、超时、输出大小和高风险确认控制。
+
+Computer Use 默认关闭，开启后默认只在本地 MCP 的 `full` 档可用；也可以通过独立开关允许已认证、使用 `full` 档的公网 Workspace 调用。截图及鼠标键盘操作每次仍需要在 MCPort Desktop 明确确认。
 
 ## 安全边界
 

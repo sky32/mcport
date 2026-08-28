@@ -53,6 +53,7 @@ import {
 import { assessCommandRisk, patchRisk, type RiskAssessment } from './risk-policy.js';
 import { authorizeOperation } from './authority.js';
 import type { OperationStore } from './operation-store.js';
+import { desktopActionAvailable, requestDesktopAction, type DesktopAction } from './desktop-actions.js';
 
 type McpAuth = Awaited<ReturnType<typeof createMcpAuth>>;
 
@@ -457,7 +458,9 @@ export async function withToolBoundary<T>(fn: () => Promise<T>): Promise<T | Ret
 }
 
 export function highRiskConfirmationMode(runtime: Pick<Config, 'highRiskConfirmationMode' | 'requireHighRiskConfirmation'>): 'local' | 'none' {
-  return runtime.highRiskConfirmationMode === 'none' || runtime.requireHighRiskConfirmation === false ? 'none' : 'local';
+  return (runtime.highRiskConfirmationMode === 'none'
+    || runtime.highRiskConfirmationMode === 'none_with_computer_use'
+    || runtime.requireHighRiskConfirmation === false) ? 'none' : 'local';
 }
 
 export function shouldRequireHighRiskConfirmation(risk: RiskAssessment, runtime: Pick<Config, 'highRiskConfirmationMode' | 'requireHighRiskConfirmation'>): boolean {
@@ -695,6 +698,9 @@ export function buildMcpServer(input: {
   };
   const canWrite = service.toolTier !== 'readonly';
   const canExecute = service.toolTier === 'full';
+  const computerUseExposed = canExecute
+    && config.computerUseEnabled
+    && (!service.id.startsWith('gateway:') || config.computerUsePublicEnabled);
   const version = process.env.APP_VERSION || '0.1.0';
   const rawMcp = new McpServer(
     { name: service.name, version },
@@ -775,7 +781,10 @@ export function buildMcpServer(input: {
       projectContext = await discoverContext(selected.root);
       modifiedAt = (await stat(selected.root)).mtime.toISOString();
     }
-    const indexStatus = selected ? codeIndex.status(selected.root) : null;
+    // Refresh before reporting the status. A previous indexed snapshot must
+    // not be advertised after the current refresh has failed, otherwise
+    // server_info says "indexed" while every index-backed tool rejects.
+    const indexStatus = selected ? await ensureCodeIndex(selected.root) : null;
     const lspStatus = selected ? await lspManager.status(selected.root, runtime) : null;
     const networkStatus = detail === 'full' ? await networkIsolationStatus(runtime) : null;
     const buildFingerprint = await runtimeBuildFingerprint(version);
@@ -820,7 +829,7 @@ export function buildMcpServer(input: {
         startedAt: RUNTIME_STARTED_AT,
         buildFingerprint,
         ...(sourceGit ? { sourceGit } : {}),
-        commandExecutionEnabled: runtime.allowCommandExecution,
+        commandExecutionEnabled: canExecute,
         allowedCommands: [...runtime.allowedCommands].sort(),
         externalNetworkAllowed: runtime.allowExternalNetwork,
         highRiskConfirmationRequired: highRiskConfirmationMode(runtime) !== 'none',
@@ -855,7 +864,7 @@ export function buildMcpServer(input: {
         safePatchSha256: canWrite,
         mutationScopes: canWrite,
         quickValidation: canWrite,
-        fullValidation: canExecute && runtime.allowCommandExecution,
+        fullValidation: canExecute,
         onboardingFingerprint: true,
         safeFileCopy: canWrite,
         sessionStatus: canExecute,
@@ -874,6 +883,7 @@ export function buildMcpServer(input: {
         validateChanges: canWrite,
         completionGate: canWrite,
         loopDetection: true,
+        computerUse: computerUseExposed && desktopActionAvailable(),
       },
       index: indexStatus,
       ...(detail === 'summary' ? { fullDetailsAvailable: true, fullDetailsToolCall: 'server_info(detail="full")' } : {}),
@@ -919,8 +929,9 @@ export function buildMcpServer(input: {
         canRead: true,
         canWrite,
         canExecute,
+        tierCanExecute: canExecute,
         quickValidation: canWrite,
-        fullValidation: canExecute && runtime.allowCommandExecution,
+        fullValidation: canExecute,
         durableOperations: canExecute,
         recovery: canExecute ? ['operation_recovery'] : [],
       },
@@ -1386,7 +1397,7 @@ export function buildMcpServer(input: {
     return {
       workspace: selected.name,
       toolTier: service.toolTier,
-      commandExecutionEnabled: canExecute && runtime.allowCommandExecution,
+      commandExecutionEnabled: canExecute,
       allowedCommands: [...runtime.allowedCommands].sort(),
       shell: false,
       externalNetworkAllowed: runtime.allowExternalNetwork,
@@ -1551,6 +1562,80 @@ export function buildMcpServer(input: {
     }
   });
 
+  if (computerUseExposed) {
+    mcp.registerTool('computer_use', {
+      description: 'Control the desktop running MCPort. Start with action=status, then action=screenshot. Screenshot responses include the coordinateWidth/coordinateHeight used by pointer actions. Supports screenshot, move, click, drag, type, key, and scroll. Every action except status normally requires explicit approval in MCPort Desktop; a Workspace may explicitly disable that approval, including for Computer Use. Public Workspace routes expose this tool only when the user explicitly enables public Computer Use.',
+      inputSchema: z.strictObject({
+        ...workspaceSchemaShape,
+        action: z.enum(['status', 'screenshot', 'move', 'click', 'drag', 'type', 'key', 'scroll']),
+        x: z.number().int().min(0).optional(),
+        y: z.number().int().min(0).optional(),
+        startX: z.number().int().min(0).optional(),
+        startY: z.number().int().min(0).optional(),
+        button: z.enum(['left', 'middle', 'right']).default('left'),
+        clickCount: z.number().int().min(1).max(2).default(1),
+        text: z.string().max(5_000).optional(),
+        intervalMs: z.number().int().min(0).max(1_000).default(0),
+        key: z.string().trim().min(1).optional(),
+        modifiers: z.array(z.string().trim().min(1)).max(4).default([]),
+        deltaX: z.number().int().min(-1_000).max(1_000).default(0),
+        deltaY: z.number().int().min(-1_000).max(1_000).default(0),
+      }),
+      annotations: executionAnnotations,
+    }, async ({ workspace, action, ...params }) => withToolErrors(async () => {
+      const selected = await resolveToolWorkspace(config, service, workspace);
+      if (!desktopActionAvailable()) throw new Error('MCPort Desktop action channel is unavailable');
+      if (['move', 'click', 'drag'].includes(action) && (params.x === undefined || params.y === undefined)) throw new Error(`${action} requires x and y coordinates`);
+      if (action === 'drag' && ((params.startX === undefined) !== (params.startY === undefined))) throw new Error('drag requires both startX and startY when a start position is provided');
+      if (action === 'type' && !params.text) throw new Error('type requires non-empty text');
+      if (action === 'key' && !params.key) throw new Error('key requires a key name');
+      if (action === 'scroll' && params.deltaX === 0 && params.deltaY === 0) throw new Error('scroll requires a non-zero deltaX or deltaY');
+      if (action === 'scroll' && ((params.x === undefined) !== (params.y === undefined))) throw new Error('scroll requires both x and y when a pointer position is provided');
+      const publicRequest = service.id.startsWith('gateway:');
+      if (action !== 'status') {
+        const category = action === 'screenshot' ? 'screen_capture' : 'desktop_control';
+        const authority = await authorizeOperation({
+          workspace: selected.name,
+          action: `${publicRequest ? 'Public Workspace request: ' : ''}${action === 'screenshot' ? 'Capture the current desktop screen' : `Perform desktop ${action}`}`,
+          risk: {
+            level: 'high',
+            categories: [category],
+            reasons: [
+              action === 'screenshot' ? 'A desktop screenshot can contain private information' : `Desktop ${action} can interact with applications outside the Workspace`,
+              ...(publicRequest ? ['This request originated from an authenticated public Workspace connection'] : []),
+            ],
+            networkIntent: false,
+          },
+          runtime: (() => {
+            const effective = configStore.getEffectiveConfig(selected.name);
+            return effective.highRiskConfirmationMode === 'none_with_computer_use'
+              ? { ...effective, requireHighRiskConfirmation: false, highRiskConfirmationMode: 'none_with_computer_use' as const }
+              : { ...effective, requireHighRiskConfirmation: true, highRiskConfirmationMode: 'local' as const };
+          })(),
+          localConfirmationAvailable: Boolean(config.localConfirmationToken),
+        });
+        if (!authority.approved) return textResult({ ok: false, cancelled: authority.policy === 'confirm', blocked: authority.policy === 'deny', authority, message: authority.explanation }, true);
+      }
+      const result = await requestDesktopAction<Record<string, unknown>>(
+        action as DesktopAction,
+        params,
+        action === 'screenshot' ? 30_000 : 10_000,
+        publicRequest ? 'public' : 'local',
+      );
+      if (action !== 'screenshot') return result;
+      const imageBase64 = typeof result.imageBase64 === 'string' ? result.imageBase64 : '';
+      if (!imageBase64) throw new Error('Desktop screenshot did not return image data');
+      const { imageBase64: _imageBase64, ...metadata } = result;
+      return {
+        content: [
+          { type: 'image' as const, data: imageBase64, mimeType: 'image/png' },
+          { type: 'text' as const, text: JSON.stringify(metadata, null, 2) },
+        ],
+        structuredContent: metadata,
+      };
+    }));
+  }
+
   mcp.registerTool('git_status', {
     description: 'Use to inspect branch/ahead-behind and current working-tree changes. Prefer this over exec_command git status; do not call repeatedly after every mutation when validate_changes or git_diff already supplies the needed change context.',
     inputSchema: z.strictObject({ ...workspaceSchemaShape, maxResults: z.number().int().min(1).max(5000).default(500), cursor: cursorField, maxTokens: maxTokensField }),
@@ -1694,7 +1779,7 @@ export function buildMcpServer(input: {
     }, async ({ workspace, operations, taskId, mode }) => withToolErrors(async () => {
       const selected = await resolveToolWorkspace(config, service, workspace);
       const runtime = configStore.getEffectiveConfig(selected.name);
-      if (mode === 'full' && (!canExecute || !runtime.allowCommandExecution)) {
+      if (mode === 'full' && !canExecute) {
         return { ok: false, blocked: true, policy: 'full-validation-requires-command-execution', nextAction: { tool: 'change_apply_and_validate', arguments: { taskId, mode: 'quick' } } };
       }
       const authority = await authorizeOperation({
@@ -2132,7 +2217,7 @@ export function buildMcpServer(input: {
       const selected = await resolveToolWorkspace(config, service, workspace);
       const runtime = configStore.getEffectiveConfig(selected.name);
       const mutationScope = resolveMutationScope(selected.name, mutationId);
-      const fullValidationAvailable = canExecute && runtime.allowCommandExecution;
+      const fullValidationAvailable = canExecute;
       const requestedMode = mode ?? (mutationScope || !fullValidationAvailable ? 'quick' : 'full');
       if (requestedMode === 'full' && !fullValidationAvailable) {
         return {
@@ -2142,8 +2227,8 @@ export function buildMcpServer(input: {
           requestedMode,
           availableModes: ['quick'],
           toolTier: service.toolTier,
-          commandExecutionEnabled: runtime.allowCommandExecution,
-          message: 'Full validation requires the full tool tier and enabled command execution. Use mode=quick for syntax and LSP validation without command execution.',
+          commandExecutionEnabled: false,
+          message: 'Full validation requires the full tool tier. Use mode=quick for syntax and LSP validation without command execution.',
           nextAction: { tool: 'validate_changes', arguments: { ...(taskId ? { taskId } : {}), ...(mutationId ? { mutationId } : {}), mode: 'quick' as const } },
         };
       }

@@ -29,7 +29,7 @@ await mkdir(workspaceRoot, { recursive: true });
 const port = await freePort();
 
 await writeFile(path.join(dataDir, 'desktop-settings.json'), `${JSON.stringify({
-  settingsVersion: 17,
+  settingsVersion: 19,
   workspaceRoot,
   registeredWorkspaces: [], selectedWorkspace: '', port, workspaceScope: [], workspaceServices: [], additionalServicesJson: '',
   authMode: 'none', proxyMode: 'off', proxyScope: 'tunnel', proxyUrl: '', proxyBypass: '<local>,localhost,127.0.0.1,[::1]',

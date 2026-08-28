@@ -43,6 +43,7 @@ import {
 } from './managed-binaries.js';
 import { installManagedLsp, managedLspStatus, type ManagedLspProgress, type ManagedLspStatus } from './managed-lsp.js';
 import { checkForAppUpdate } from './app-updater.js';
+import { computerUseStatus, performComputerAction, requestComputerUsePermissions, type ComputerAction } from './computer-use.js';
 
 type AuthMode = 'none' | 'token';
 type ProxyMode = 'off' | 'system' | 'manual';
@@ -52,6 +53,9 @@ type UiLanguageMode = 'system' | 'zh-CN' | 'en-US';
 type DebugMode = 'off' | 'basic' | 'detailed';
 type PublicAccessProvider = 'cloudflare' | 'trycloudflare' | 'frp' | 'external';
 type PublicClientMode = 'managed' | 'custom';
+type CloudflareTransportProtocol = 'auto' | 'quic' | 'http2';
+type CloudflareEdgeIpVersion = 'auto' | '4' | '6';
+type FrpTransportProtocol = 'tcp' | 'quic' | 'kcp';
 type WorkspacePublicAuthMode = 'token' | 'oauth';
 type WorkspaceToolTier = 'readonly' | 'standard' | 'full';
 type RuntimePhase = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
@@ -79,14 +83,20 @@ type DesktopSettings = {
   uiLanguage: UiLanguageMode;
   debugMode: DebugMode;
   lowMemoryTray: boolean;
+  computerUseEnabled: boolean;
+  computerUsePublicEnabled: boolean;
   publicAccessProvider: PublicAccessProvider;
   publicClientMode: PublicClientMode;
   publicClientPath: string;
   publicClientVersion: string;
+  cloudflareTransportProtocol: CloudflareTransportProtocol;
+  cloudflareEdgeIpVersion: CloudflareEdgeIpVersion;
   tunnelBaseDomain: string;
   frpServerAddr: string;
   frpServerPort: number;
   frpSubdomain: string;
+  frpTransportProtocol: FrpTransportProtocol;
+  frpUseCompression: boolean;
   /** @deprecated retained for settings-file compatibility; HTTP FRP no longer uses it. */
   frpRemotePort: number;
   startTunnelWithRuntime: boolean;
@@ -115,7 +125,7 @@ type RuntimeSettings = {
   allowCommandExecution: boolean;
   allowExternalNetwork: boolean;
   requireHighRiskConfirmation: boolean;
-  highRiskConfirmationMode: 'local' | 'none';
+  highRiskConfirmationMode: 'local' | 'none' | 'none_with_computer_use';
   networkIsolationRequired: boolean;
   lspEnabled: boolean;
   lspRequestTimeoutMs: number;
@@ -137,7 +147,7 @@ type RuntimeProfile = {
   allowCommandExecution: boolean | null;
   allowExternalNetwork: boolean | null;
   requireHighRiskConfirmation: boolean | null;
-  highRiskConfirmationMode: 'local' | 'none' | null;
+  highRiskConfirmationMode: 'local' | 'none' | 'none_with_computer_use' | null;
   maxCommandOutputBytes: number | null;
   defaultCommandTimeoutMs: number | null;
   maxCommandTimeoutMs: number | null;
@@ -241,6 +251,7 @@ type DesktopState = {
   hasFrpToken: boolean;
   managedBinaries: Record<ManagedBinaryKind, ManagedBinaryStatus>;
   managedLsp: ManagedLspStatus;
+  computerUse: { enabled: boolean; available: boolean; platform: NodeJS.Platform; screen: unknown; permissions: unknown; error?: unknown };
   encryptionAvailable: boolean;
   logs: string[];
 };
@@ -268,7 +279,9 @@ let runtimeMutationQueue: Promise<void> = Promise.resolve();
 let runtimeRecoveryTimer: NodeJS.Timeout | null = null;
 let runtimeRecoveryAttempt = 0;
 let tunnelRecoveryTimer: NodeJS.Timeout | null = null;
+let tunnelRecoveryResetTimer: NodeJS.Timeout | null = null;
 let tunnelRecoveryAttempt = 0;
+const TUNNEL_STABLE_RESET_MS = 60_000;
 let tunnelDesiredRunning = false;
 let tunnelAutostartSuppressed = false;
 let localConfirmationPollTimer: NodeJS.Timeout | null = null;
@@ -279,6 +292,13 @@ let oauthInteractionBusy = false;
 
 type RuntimeControlMethod = 'health' | 'tool_catalog' | 'local_confirmations' | 'local_confirmation_decision' | 'oauth_interactions' | 'oauth_interaction_ack';
 type RuntimeControlResponse = { type: 'mcport:runtime-control-response'; id: string; ok: boolean; result?: unknown; error?: string };
+type DesktopActionRequest = {
+  type: 'mcport:desktop-action-request';
+  id: string;
+  action: ComputerAction;
+  params?: Record<string, unknown>;
+  source?: 'local' | 'public';
+};
 const runtimeControlPending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
 let runtimeControlSequence = 0;
 
@@ -292,6 +312,20 @@ function rejectRuntimeControlRequests(error: Error): void {
 
 function handleRuntimeControlMessage(raw: unknown): void {
   if (!raw || typeof raw !== 'object') return;
+  const desktopRequest = raw as Partial<DesktopActionRequest>;
+  if (desktopRequest.type === 'mcport:desktop-action-request' && typeof desktopRequest.id === 'string' && typeof desktopRequest.action === 'string') {
+    const child = runtimeProcess;
+    void (async () => {
+      if (!settings.computerUseEnabled) throw new Error('Computer Use is disabled in MCPort settings');
+      if (desktopRequest.source === 'public' && !settings.computerUsePublicEnabled) {
+        throw new Error('Public Computer Use is disabled in MCPort settings');
+      }
+      return performComputerAction(desktopRequest.action as ComputerAction, desktopRequest.params && typeof desktopRequest.params === 'object' ? desktopRequest.params : {});
+    })()
+      .then((result) => child?.postMessage({ type: 'mcport:desktop-action-response', id: desktopRequest.id, ok: true, result }))
+      .catch((error) => child?.postMessage({ type: 'mcport:desktop-action-response', id: desktopRequest.id, ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return;
+  }
   const message = raw as Partial<RuntimeControlResponse>;
   if (message.type !== 'mcport:runtime-control-response' || typeof message.id !== 'string') return;
   const pending = runtimeControlPending.get(message.id);
@@ -347,6 +381,9 @@ const localConfirmationCategoryLabels: Record<string, string> = {
   file_delete: '文件删除：会删除 Workspace 内的文件或目录',
   overwrite: '内容覆盖：可能替换已有文件内容',
   checkpoint_restore: '检查点恢复：会把文件恢复到历史状态',
+  operation_reconcile: '操作裁决：会根据外部证据确认未知操作的最终状态',
+  screen_capture: '屏幕截图：可能包含项目之外的窗口或敏感信息',
+  desktop_control: '桌面控制：会操作 Workspace 之外的本机应用',
 };
 
 function localConfirmationDetail(request: LocalConfirmationPayload): string {
@@ -905,11 +942,14 @@ function scheduleTunnelRecovery(reason = tunnelState.error || ''): void {
   const quickRetry = settings.publicAccessProvider === 'trycloudflare'
     && isTransientTryCloudflareFailure(reason)
     && attemptIndex < 2;
-  const delay = quickRetry
+  const baseDelay = quickRetry
     ? [750, 2_000][attemptIndex]
     : settings.publicAccessProvider === 'trycloudflare'
       ? Math.min(30_000, 8_000 * (2 ** Math.min(Math.max(0, attemptIndex - 2), 2)))
       : Math.min(30_000, 1_000 * (2 ** Math.min(attemptIndex, 5)));
+  const delay = quickRetry
+    ? baseDelay
+    : Math.min(30_000, Math.max(1_000, Math.round(baseDelay * (0.85 + Math.random() * 0.3))));
   tunnelRecoveryAttempt += 1;
   const retryAttempt = tunnelRecoveryAttempt;
   const retryMode: 'quick' | 'recovery' = quickRetry ? 'quick' : 'recovery';
@@ -986,6 +1026,24 @@ function normalizePublicClientMode(value: unknown): PublicClientMode {
   const mode = String(value ?? 'managed').trim().toLowerCase();
   if (mode === 'managed' || mode === 'custom') return mode;
   throw new Error('公网客户端模式必须是 App 管理或自定义路径');
+}
+
+function normalizeCloudflareTransportProtocol(value: unknown): CloudflareTransportProtocol {
+  const protocol = String(value ?? 'auto').trim().toLowerCase();
+  if (protocol === 'auto' || protocol === 'quic' || protocol === 'http2') return protocol;
+  throw new Error('Cloudflare 传输协议必须是 Auto、QUIC 或 HTTP/2');
+}
+
+function normalizeCloudflareEdgeIpVersion(value: unknown): CloudflareEdgeIpVersion {
+  const version = String(value ?? 'auto').trim().toLowerCase();
+  if (version === 'auto' || version === '4' || version === '6') return version;
+  throw new Error('Cloudflare Edge IP 版本必须是 Auto、IPv4 或 IPv6');
+}
+
+function normalizeFrpTransportProtocol(value: unknown): FrpTransportProtocol {
+  const protocol = String(value ?? 'tcp').trim().toLowerCase();
+  if (protocol === 'tcp' || protocol === 'quic' || protocol === 'kcp') return protocol;
+  throw new Error('FRP 传输协议必须是 TCP、QUIC 或 KCP');
 }
 
 function normalizeProxyUrl(value: unknown, mode: ProxyMode): string {
@@ -1809,9 +1867,13 @@ async function writeFrpConfig(): Promise<string> {
   const content = [
     `serverAddr = ${tomlString(settings.frpServerAddr)}`,
     `serverPort = ${settings.frpServerPort}`,
+    'loginFailExit = true',
     'auth.method = "token"',
     `auth.token = ${tomlString(token)}`,
     'transport.tls.enable = true',
+    `transport.protocol = ${tomlString(settings.frpTransportProtocol)}`,
+    'transport.tcpMux = true',
+    'transport.tcpMuxKeepaliveInterval = 30',
     '',
     '[[proxies]]',
     'name = "w-mcp"',
@@ -1819,6 +1881,7 @@ async function writeFrpConfig(): Promise<string> {
     'localIP = "127.0.0.1"',
     `localPort = ${settings.port}`,
     `subdomain = ${tomlString(settings.frpSubdomain)}`,
+    `transport.useCompression = ${settings.frpUseCompression ? 'true' : 'false'}`,
     '',
   ].join('\n');
   await writeFile(filePath, content, { encoding: 'utf8', mode: 0o600 });
@@ -1845,14 +1908,20 @@ function defaultSettings(): DesktopSettings {
     uiLanguage: 'system',
     debugMode: 'off',
     lowMemoryTray: true,
+    computerUseEnabled: false,
+    computerUsePublicEnabled: false,
     publicAccessProvider: 'cloudflare',
     publicClientMode: 'managed',
     publicClientPath: '',
     publicClientVersion: '',
+    cloudflareTransportProtocol: 'auto',
+    cloudflareEdgeIpVersion: 'auto',
     tunnelBaseDomain: '',
     frpServerAddr: '',
     frpServerPort: 7000,
     frpSubdomain: 'mcp',
+    frpTransportProtocol: 'tcp',
+    frpUseCompression: false,
     frpRemotePort: 18443,
     startTunnelWithRuntime: false,
     launchAtLogin: false,
@@ -1877,10 +1946,20 @@ function normalizeSettings(input: Partial<DesktopSettings>, current: DesktopSett
   const appearance = normalizeAppearance(input.appearance === undefined ? current.appearance : input.appearance);
   const uiLanguage = normalizeUiLanguage(input.uiLanguage === undefined ? current.uiLanguage : input.uiLanguage);
   const debugMode = normalizeDebugMode(input.debugMode === undefined ? current.debugMode : input.debugMode);
+  const computerUseEnabled = input.computerUseEnabled === undefined ? Boolean(current.computerUseEnabled) : Boolean(input.computerUseEnabled);
+  const computerUsePublicEnabled = computerUseEnabled && (input.computerUsePublicEnabled === undefined
+    ? Boolean(current.computerUsePublicEnabled)
+    : Boolean(input.computerUsePublicEnabled));
   const publicAccessProvider = normalizePublicAccessProvider(input.publicAccessProvider === undefined ? current.publicAccessProvider : input.publicAccessProvider);
   const publicClientMode = normalizePublicClientMode(input.publicClientMode === undefined ? current.publicClientMode : input.publicClientMode);
   const publicClientPath = input.publicClientPath === undefined ? String(current.publicClientPath || '').trim() : String(input.publicClientPath || '').trim();
   const publicClientVersion = input.publicClientVersion === undefined ? String(current.publicClientVersion || '').trim() : String(input.publicClientVersion || '').trim();
+  const cloudflareTransportProtocol = normalizeCloudflareTransportProtocol(
+    input.cloudflareTransportProtocol === undefined ? current.cloudflareTransportProtocol : input.cloudflareTransportProtocol,
+  );
+  const cloudflareEdgeIpVersion = normalizeCloudflareEdgeIpVersion(
+    input.cloudflareEdgeIpVersion === undefined ? current.cloudflareEdgeIpVersion : input.cloudflareEdgeIpVersion,
+  );
   if (publicClientVersion && !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,79}$/.test(publicClientVersion)) throw new Error('公网客户端版本号格式无效');
   if (publicClientMode === 'custom' && publicAccessProvider !== 'external' && !publicClientPath) throw new Error('使用自定义公网客户端时必须填写路径');
   const tunnelBaseDomain = input.tunnelBaseDomain === undefined
@@ -1893,6 +1972,9 @@ function normalizeSettings(input: Partial<DesktopSettings>, current: DesktopSett
     throw new Error('启用 Workspace 公网 MCP 前请先设置公网 Host；TryCloudflare 会在启动后自动生成临时 Host');
   }
   const frpServerPort = input.frpServerPort === undefined ? Number(current.frpServerPort || 7000) : Number(input.frpServerPort);
+  const frpTransportProtocol = normalizeFrpTransportProtocol(
+    input.frpTransportProtocol === undefined ? current.frpTransportProtocol : input.frpTransportProtocol,
+  );
   const frpSubdomain = input.frpSubdomain === undefined
     ? String(current.frpSubdomain || 'mcp').trim().toLowerCase()
     : String(input.frpSubdomain || '').trim().toLowerCase();
@@ -1923,14 +2005,22 @@ function normalizeSettings(input: Partial<DesktopSettings>, current: DesktopSett
     uiLanguage,
     debugMode,
     lowMemoryTray: input.lowMemoryTray === undefined ? current.lowMemoryTray : Boolean(input.lowMemoryTray),
+    computerUseEnabled,
+    computerUsePublicEnabled,
     publicAccessProvider,
     publicClientMode,
     publicClientPath,
     publicClientVersion,
+    cloudflareTransportProtocol,
+    cloudflareEdgeIpVersion,
     tunnelBaseDomain,
     frpServerAddr: normalizeFrpServerAddr(input.frpServerAddr === undefined ? current.frpServerAddr : input.frpServerAddr),
     frpServerPort,
     frpSubdomain,
+    frpTransportProtocol,
+    frpUseCompression: input.frpUseCompression === undefined
+      ? Boolean(current.frpUseCompression)
+      : Boolean(input.frpUseCompression),
     frpRemotePort,
     startTunnelWithRuntime: input.startTunnelWithRuntime === undefined
       ? current.startTunnelWithRuntime
@@ -2316,6 +2406,7 @@ function currentState(): DesktopState {
       frpc: { kind: 'frpc', installed: false, version: '', path: '', previousVersion: '', installedVersions: [] },
     },
     managedLsp: { root: path.join(app.getPath('userData'), 'managed-tools', 'lsp'), languages: [] },
+    computerUse: { enabled: settings.computerUseEnabled, available: false, platform: process.platform, screen: null, permissions: null },
     encryptionAvailable: safeStorage.isEncryptionAvailable(),
     logs: [...logs],
   };
@@ -2334,6 +2425,9 @@ async function stateWithSecrets(): Promise<DesktopState> {
     managedBinaryStatus(app.getPath('userData'), 'frpc'),
   ]);
   const managedLsp = await managedLspStatus(app.getPath('userData'), desktopRuntimeStore?.getRuntimeSettings().runtimePath || defaultRuntimeSettings().runtimePath);
+  const computerUse = settings.computerUseEnabled
+    ? computerUseStatus()
+    : { available: false, platform: process.platform, screen: null, permissions: null };
   return {
     ...currentState(),
     hasApiToken: apiToken,
@@ -2343,6 +2437,14 @@ async function stateWithSecrets(): Promise<DesktopState> {
     hasFrpToken: Boolean(process.env.RW_MCP_DESKTOP_SMOKE_FRP_TOKEN?.trim() || file.frpToken),
     managedBinaries: { cloudflared, frpc },
     managedLsp,
+    computerUse: {
+      enabled: settings.computerUseEnabled,
+      available: computerUse.available === true,
+      platform: process.platform,
+      screen: computerUse.screen ?? null,
+      permissions: computerUse.permissions ?? null,
+      ...('error' in computerUse && computerUse.error ? { error: computerUse.error } : {}),
+    },
   };
 }
 
@@ -2447,6 +2549,8 @@ async function runtimeEnvironment(instanceId: string): Promise<NodeJS.ProcessEnv
     RUNTIME_INSTANCE_ID: instanceId,
     APP_VERSION: app.getVersion(),
     MCP_TRACE_MODE: settings.debugMode,
+    COMPUTER_USE_ENABLED: settings.computerUseEnabled ? 'true' : 'false',
+    COMPUTER_USE_PUBLIC_ENABLED: settings.computerUseEnabled && settings.computerUsePublicEnabled ? 'true' : 'false',
     HIGH_RISK_CONFIRMATION_MODE: 'local',
     LOCAL_CONFIRMATION_TOKEN: localConfirmationToken,
     MCP_TRACE_FILE: path.join(app.getPath('userData'), 'runtime', 'tool-traces.ndjson'),
@@ -2545,7 +2649,7 @@ async function saveAllSettings(
   nextSettings = reconcileWorkspaceServices(nextSettings, nextSettings.selectedWorkspace || undefined);
   const nextRuntime = normalizeRuntimeSettings(runtimeInput, previousRuntime);
   const runtimeDesktopKeys = [
-    'port', 'workspaceScope', 'additionalServicesJson', 'authMode', 'debugMode', 'tunnelBaseDomain',
+    'port', 'workspaceScope', 'additionalServicesJson', 'authMode', 'debugMode', 'tunnelBaseDomain', 'computerUseEnabled', 'computerUsePublicEnabled',
     'proxyMode', 'proxyScope', 'proxyUrl', 'proxyBypass',
   ];
   const runtimeConfigChanged = JSON.stringify(previousRuntime) !== JSON.stringify(nextRuntime)
@@ -2553,7 +2657,9 @@ async function saveAllSettings(
     || Boolean(desktopInput.apiToken?.trim());
   const publicConfigChanged = [
     'publicAccessProvider', 'publicClientMode', 'publicClientPath', 'publicClientVersion', 'tunnelBaseDomain',
-    'frpServerAddr', 'frpServerPort', 'frpSubdomain', 'frpRemotePort', 'proxyMode', 'tunnelProxyEnabled', 'proxyUrl', 'proxyBypass',
+    'cloudflareTransportProtocol', 'cloudflareEdgeIpVersion',
+    'frpServerAddr', 'frpServerPort', 'frpSubdomain', 'frpRemotePort', 'frpTransportProtocol', 'frpUseCompression',
+    'proxyMode', 'tunnelProxyEnabled', 'proxyUrl', 'proxyBypass',
   ].some((key) => (previousSettings as unknown as Record<string, unknown>)[key] !== (nextSettings as unknown as Record<string, unknown>)[key])
     || Boolean(desktopInput.tunnelToken?.trim())
     || Boolean(desktopInput.frpToken?.trim());
@@ -2739,6 +2845,10 @@ function waitForTryCloudflareUrl(child: ChildProcess, timeoutMs = 20_000): Promi
 async function startTunnel(recovery = false): Promise<DesktopState> {
   if (tunnelState.phase === 'running' || tunnelState.phase === 'starting') return stateWithSecrets();
   if (!recovery) tunnelRecoveryAttempt = 0;
+  if (tunnelRecoveryResetTimer) {
+    clearTimeout(tunnelRecoveryResetTimer);
+    tunnelRecoveryResetTimer = null;
+  }
   if (tunnelRecoveryTimer) {
     clearTimeout(tunnelRecoveryTimer);
     tunnelRecoveryTimer = null;
@@ -2779,11 +2889,21 @@ async function startTunnel(recovery = false): Promise<DesktopState> {
     if (provider === 'cloudflare') {
       const token = await readTunnelToken();
       if (!token) throw new Error('请先保存 Cloudflare Tunnel Token');
-      args = ['tunnel', '--no-autoupdate', '--loglevel', 'info', 'run'];
+      args = [
+        'tunnel', '--no-autoupdate', '--loglevel', 'info',
+        '--protocol', settings.cloudflareTransportProtocol,
+        '--edge-ip-version', settings.cloudflareEdgeIpVersion,
+        'run',
+      ];
       childEnv = { ...childEnv, TUNNEL_TOKEN: token };
     } else if (provider === 'trycloudflare') {
       await assertTryCloudflareCompatible();
-      args = ['tunnel', '--url', `http://127.0.0.1:${settings.port}`];
+      args = [
+        'tunnel',
+        '--protocol', settings.cloudflareTransportProtocol,
+        '--edge-ip-version', settings.cloudflareEdgeIpVersion,
+        '--url', `http://127.0.0.1:${settings.port}`,
+      ];
     } else {
       const configPath = await writeFrpConfig();
       args = ['-c', configPath];
@@ -2869,7 +2989,18 @@ async function startTunnel(recovery = false): Promise<DesktopState> {
       }, readinessDelayMs);
       readinessTimer.unref();
     }
-    tunnelRecoveryAttempt = 0;
+    if (recovery) {
+      tunnelRecoveryResetTimer = setTimeout(() => {
+        tunnelRecoveryResetTimer = null;
+        if (tunnelState.phase === 'running' && tunnelProcess === child) {
+          tunnelRecoveryAttempt = 0;
+          appendLog('desktop', 'Tunnel recovery backoff reset after stable connection');
+        }
+      }, TUNNEL_STABLE_RESET_MS);
+      tunnelRecoveryResetTimer.unref();
+    } else {
+      tunnelRecoveryAttempt = 0;
+    }
     const providerLabel = provider === 'frp' ? 'FRP Client' : provider === 'trycloudflare' ? 'TryCloudflare Quick Tunnel' : 'Cloudflare Tunnel';
     appendLog('tunnel', `${providerLabel} running · 当前 App 已配置 ${publicRoutes.length} 个 Workspace 公网路由`);
   } catch (error) {
@@ -2893,6 +3024,10 @@ async function startTunnel(recovery = false): Promise<DesktopState> {
 
 async function stopTunnel(): Promise<DesktopState> {
   tunnelDesiredRunning = false;
+  if (tunnelRecoveryResetTimer) {
+    clearTimeout(tunnelRecoveryResetTimer);
+    tunnelRecoveryResetTimer = null;
+  }
   if (tunnelRecoveryTimer) {
     clearTimeout(tunnelRecoveryTimer);
     tunnelRecoveryTimer = null;
@@ -2940,6 +3075,14 @@ async function startRuntime(startConfiguredTunnel = true): Promise<DesktopState>
   runtimeState = { phase: 'starting', pid: null, startedAt: null, error: null };
   broadcastState();
   let child: UtilityProcess | null = null;
+  const runtimeDiagnostics: string[] = [];
+  const captureRuntimeDiagnostics = (chunk: Buffer | string) => {
+    const text = (Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk)
+      .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+      .replace(/(MCP_API_TOKEN|LOCAL_CONFIRMATION_TOKEN|BEARER_TOKEN|PRIVATE_JWK)\s*[:=]\s*\S+/gi, '$1=[redacted]');
+    for (const line of text.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) runtimeDiagnostics.push(line);
+    if (runtimeDiagnostics.length > 8) runtimeDiagnostics.splice(0, runtimeDiagnostics.length - 8);
+  };
   try {
     await ensureRuntimePortsAvailable();
     const instanceId = randomBytes(16).toString('hex');
@@ -2951,8 +3094,8 @@ async function startRuntime(startConfiguredTunnel = true): Promise<DesktopState>
     runtimeProcess = child;
     child.on('message', handleRuntimeControlMessage);
     appendLog('desktop', `Utility process created (pid=${child.pid ?? 'unknown'})`);
-    child.stdout?.on('data', (chunk) => appendLog('runtime', chunk));
-    child.stderr?.on('data', (chunk) => appendLog('runtime', chunk));
+    child.stdout?.on('data', (chunk) => { captureRuntimeDiagnostics(chunk); appendLog('runtime', chunk); });
+    child.stderr?.on('data', (chunk) => { captureRuntimeDiagnostics(chunk); appendLog('runtime', chunk); });
     child.once('exit', (code) => {
       child?.removeListener('message', handleRuntimeControlMessage);
       rejectRuntimeControlRequests(new Error(`Runtime exited with code ${code}`));
@@ -2960,11 +3103,12 @@ async function startRuntime(startConfiguredTunnel = true): Promise<DesktopState>
       if (generation !== runtimeGeneration || runtimeProcess !== child) return;
       runtimeProcess = null;
       if (runtimeState.phase !== 'stopping') {
+        const diagnostic = runtimeDiagnostics.length ? ` · ${runtimeDiagnostics.slice(-4).join(' | ')}` : '';
         runtimeState = {
           phase: code === 0 ? 'stopped' : 'error',
           pid: null,
           startedAt: null,
-          error: code === 0 ? null : `Runtime exited with code ${code}`,
+          error: code === 0 ? null : `Runtime exited with code ${code}${diagnostic}`,
         };
         broadcastState();
         scheduleRuntimeRecovery();
@@ -3229,7 +3373,7 @@ function installIpcHandlers(): void {
             disabledButton: styleOf('#tunnelActionButton'),
             logsToolbar: styleOf('.logs-toolbar'),
             runtimeCardPresent: Boolean(document.querySelector('#globalRuntimeCard')),
-            latencyLabel: document.querySelector('#globalLatencyCard > div > span')?.textContent || '',
+            sidebarStatusPresent: Boolean(document.querySelector('.sidebar-status')),
             secondarySettingsColumns: (() => {
               const grid = document.querySelector('.global-secondary-settings-grid');
               return grid instanceof Element ? getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length : 0;
@@ -3398,7 +3542,7 @@ function installIpcHandlers(): void {
           || !rendererTheme?.disabledButton?.background
           || rendererTheme?.logsToolbar?.background !== 'rgb(255, 255, 255)'
           || rendererTheme?.runtimeCardPresent !== false
-          || rendererTheme?.latencyLabel !== '响应延迟'
+          || rendererTheme?.sidebarStatusPresent !== false
           || Number(rendererTheme?.secondarySettingsColumns || 0) < 2
           || rendererTheme?.allowedCommandsResetPresent !== true
           || rendererTheme?.managedClientVersionControlsPresent !== true
@@ -3478,6 +3622,19 @@ function installIpcHandlers(): void {
       throw new Error('Invalid GitHub release URL');
     }
     return shell.openExternal(url);
+  });
+  ipcMain.handle('desktop:open-computer-use-settings', async () => {
+    if (process.platform === 'darwin') {
+      const permissions = (await requestComputerUsePermissions()).permissions;
+      const pane = permissions.screen === 'granted' ? 'Privacy_Accessibility' : 'Privacy_ScreenCapture';
+      await shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${pane}`);
+      return true;
+    }
+    return false;
+  });
+  ipcMain.handle('desktop:get-computer-use-status', () => {
+    const status = computerUseStatus();
+    return status;
   });
   ipcMain.handle('desktop:check-workspace-health', () => checkWorkspaceHealth());
   ipcMain.handle('desktop:check-public-config', () => checkPublicAccessConfiguration());

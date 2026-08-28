@@ -32,9 +32,11 @@ assert.equal(executableNpx.networkIntent, true);
 assert.equal(highRiskConfirmationMode({ requireHighRiskConfirmation: true, highRiskConfirmationMode: 'local' }), 'local');
 assert.equal(highRiskConfirmationMode({ requireHighRiskConfirmation: true, highRiskConfirmationMode: 'client' }), 'local');
 assert.equal(highRiskConfirmationMode({ requireHighRiskConfirmation: false, highRiskConfirmationMode: 'none' }), 'none');
+assert.equal(highRiskConfirmationMode({ requireHighRiskConfirmation: true, highRiskConfirmationMode: 'none_with_computer_use' }), 'none');
 assert.equal(shouldRequireHighRiskConfirmation(executableNpx, { requireHighRiskConfirmation: true, highRiskConfirmationMode: 'local' }), true);
 assert.equal(shouldRequireHighRiskConfirmation(executableNpx, { requireHighRiskConfirmation: true, highRiskConfirmationMode: 'client' }), true);
 assert.equal(shouldRequireHighRiskConfirmation(executableNpx, { requireHighRiskConfirmation: false, highRiskConfirmationMode: 'none' }), false);
+assert.equal(shouldRequireHighRiskConfirmation(executableNpx, { requireHighRiskConfirmation: true, highRiskConfirmationMode: 'none_with_computer_use' }), false);
 
 const localApproval = requestLocalConfirmation('alpha', 'Run high-risk command: npx hyperframes preview', executableNpx, 1000);
 const pendingApproval = listLocalConfirmations();

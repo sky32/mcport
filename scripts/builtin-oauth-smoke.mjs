@@ -250,7 +250,7 @@ try {
     authorizePage.status !== 200
     || !authorizePage.body.includes('Private Key JWT Smoke Client')
     || !authorizePage.body.includes('授权口令')
-    || !authorizePage.body.includes('工具权限档位')
+    || !authorizePage.body.includes('工具范围')
     || !authorizePage.body.includes('允许的操作')
     || !authorizePage.body.includes('正在授权并返回 MCP 客户端')
     || !authorizePage.body.includes(resource)

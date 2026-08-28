@@ -6,7 +6,7 @@ export type RuntimeSettings = {
   allowCommandExecution: boolean;
   allowExternalNetwork: boolean;
   requireHighRiskConfirmation: boolean;
-  highRiskConfirmationMode: 'local' | 'none';
+  highRiskConfirmationMode: 'local' | 'none' | 'none_with_computer_use';
   networkIsolationRequired: boolean;
   lspEnabled: boolean;
   lspRequestTimeoutMs: number;
@@ -28,7 +28,7 @@ export type RuntimeProfile = {
   allowCommandExecution: boolean | null;
   allowExternalNetwork: boolean | null;
   requireHighRiskConfirmation: boolean | null;
-  highRiskConfirmationMode: 'local' | 'none' | null;
+  highRiskConfirmationMode: 'local' | 'none' | 'none_with_computer_use' | null;
   maxCommandOutputBytes: number | null;
   defaultCommandTimeoutMs: number | null;
   maxCommandTimeoutMs: number | null;

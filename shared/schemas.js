@@ -17,7 +17,7 @@ export const plainCommandSchema = z.string().trim().min(1).refine(
   'Command must be a plain executable name',
 );
 
-export const highRiskConfirmationModeSchema = z.enum(['local', 'none']);
+export const highRiskConfirmationModeSchema = z.enum(['local', 'none', 'none_with_computer_use']);
 
 export const runtimeSettingsShape = {
   runtimePath: z.string().trim().min(1),

@@ -20,12 +20,6 @@
           <button class="nav-item" data-page="logs" data-icon="bug">日志</button>
           <button class="nav-item ui-hidden" data-page="debug" data-icon="pulse">调试</button>
         </nav>
-        <div class="sidebar-status" aria-label="运行状态">
-          <div class="sidebar-status-title">状态</div>
-          <div class="sidebar-status-item" id="globalTunnelCard" tabindex="0"><span class="sidebar-status-icon" data-icon="train-front-tunnel"></span><div><span>公网通道</span><strong id="globalTunnelStatus">未运行</strong></div></div>
-          <div class="sidebar-status-item" id="globalHealthCard" tabindex="0"><span class="sidebar-status-icon" data-icon="waypoints"></span><div><span>连接健康</span><strong id="globalHealthStatus">待检查</strong></div></div>
-          <div class="sidebar-status-item" id="globalLatencyCard" tabindex="0"><span class="sidebar-status-icon" data-icon="pulse"></span><div><span>响应延迟</span><strong id="globalLatencyStatus">—</strong></div></div>
-        </div>
         <div class="sr-only" id="endpoint">Runtime 未启动</div>
         <div class="sr-only" id="runtimeMeta">Runtime 未启动</div>
         <div class="sr-only" id="tunnelStatusBadge">未运行</div>
@@ -97,10 +91,20 @@
                   <div class="provider-config-title">TryCloudflare Quick Tunnel</div>
                   <div class="muted">无需 Cloudflare 账号、域名或 Tunnel Token。启动后 cloudflared 会生成随机 <code>*.trycloudflare.com</code> 地址；重启后地址会变化。仅用于测试/开发：无 SLA，最多约 200 个并发请求，并且 Cloudflare 官方说明不支持 SSE。</div>
                 </div>
+                <div id="cloudflareTransportFields" class="provider-config-card provider-network-card">
+                  <div class="provider-config-title" data-i18n="tunnel.network.title">网络传输</div>
+                  <div class="grid two form-grid">
+                    <div><label data-i18n="tunnel.cloudflare.protocol">传输协议</label><select id="cloudflareTransportProtocolInput"><option value="auto" data-i18n="tunnel.cloudflare.protocolAuto">自动（推荐）</option><option value="quic">QUIC</option><option value="http2">HTTP/2</option></select></div>
+                    <div><label data-i18n="tunnel.cloudflare.edgeIp">Edge IP 版本</label><select id="cloudflareEdgeIpVersionInput"><option value="auto" data-i18n="tunnel.cloudflare.ipAuto">自动（双栈回退）</option><option value="4">IPv4</option><option value="6">IPv6</option></select></div>
+                  </div>
+                  <p class="hint" data-i18n="tunnel.cloudflare.networkHint">自动模式优先使用 QUIC，UDP 不可用时回退 HTTP/2；IP 自动模式可在双栈网络故障时回退。</p>
+                </div>
                 <div id="frpProviderFields" class="ui-hidden provider-config-card">
                   <div class="provider-config-title">FRP 配置</div>
                   <div class="grid two form-grid"><div><label>FRP Server <span class="help-tip" tabindex="0" data-help="frps 服务端地址，只填写域名或 IP，不带协议和端口。frpc 会主动连接这个服务器。">?</span></label><input id="frpServerAddrInput" placeholder="frps.demo.com" /></div><div><label>Server Port <span class="help-tip" tabindex="0" data-help="frps 接收客户端连接的 bindPort，必须与服务器端 frps 配置一致；默认示例为 7000。">?</span></label><input id="frpServerPortInput" type="number" min="1" max="65535" value="7000" /></div></div>
                   <div class="grid two form-grid frp-auth-row"><div><label>FRP Token <span class="muted" id="frpTokenSavedHint"></span> <span class="help-tip" tabindex="0" data-help="frpc 连接 frps 使用的认证 Token。使用系统安全存储加密保存；留空保存不会覆盖已有值。">?</span></label><input id="frpTokenInput" type="password" placeholder="留空保持当前 FRP Token" /></div><div><label>FRP Subdomain <span class="help-tip" tabindex="0" data-help="生成 HTTP 类型的 frpc 代理，例如 mcp；公网入口为 https://mcp.你的公网 Host/w/&lt;workspace&gt;/mcp。FRP 的 transport.tls 只保护 frpc 到 frps 的控制连接，公网 OAuth 仍需要服务器端为该域名提供 HTTPS。">?</span></label><input id="frpSubdomainInput" value="mcp" placeholder="mcp" /></div></div>
+                  <div class="grid two form-grid frp-network-row"><div><label data-i18n="tunnel.frp.protocol">传输协议</label><select id="frpTransportProtocolInput"><option value="tcp" data-i18n="tunnel.frp.protocolTcp">TCP（推荐）</option><option value="quic">QUIC</option><option value="kcp">KCP</option></select></div><label class="switch-row compact-switch"><input id="frpUseCompressionInput" type="checkbox" /><span data-i18n="tunnel.frp.compression">压缩传输内容</span></label></div>
+                  <p class="hint" data-i18n="tunnel.frp.networkHint">QUIC/KCP 必须由 frps 开放对应 UDP 端口；压缩适合弱网和较长的 JSON 输出，但会增加少量 CPU 占用。</p>
                 </div>
               </div>
               <div class="gateway-config-card" id="publicGatewayCard">
@@ -171,9 +175,13 @@
                   <div class="input-row"><input id="runtimeConfigCommandsInput" placeholder="git,node,npm,npx,pnpm,yarn,bun,python,python3,uv,pytest..." /><button class="button subtle" id="resetAllowedCommandsButton" data-icon="refresh">恢复默认</button></div>
                   <p class="hint" id="runtimeCommandsHint"></p>
                   <label class="switch-row"><input id="runtimeNetworkIsolationRequiredInput" type="checkbox" /><span>缺少强网络隔离能力时拒绝执行 <span class="help-tip" tabindex="0" data-help="推荐开启。关闭外部网络后，如果当前系统没有 sandbox-exec、bwrap 或 unshare 等可强制隔离网络的能力，则拒绝启动 AI 控制的命令，而不是退化为仅设置代理环境变量。">?</span></span></label>
+                  <div class="computer-use-card">
+                    <div class="computer-use-copy"><strong class="icon-copy-title"><span class="inline-label-icon" data-icon="square-mouse-pointer"></span><span data-i18n="computerUse.title">Computer Use</span><span id="computerUseStatus" class="computer-use-status"></span></strong><p data-i18n="computerUse.desc">允许 AI 查看屏幕并操作鼠标和键盘。默认仅本地 MCP 可用，每次操作都需要在 MCPort 确认。</p><p id="computerUsePublicWarning" class="hint warning-text ui-hidden" data-i18n="computerUse.publicWarning">公网 AI 仅能在该 Workspace 使用“开发工具”范围时请求桌面操作。每次操作仍需在 MCPort 确认。</p></div>
+                    <div class="computer-use-actions"><label class="switch-row compact-switch"><input id="computerUseEnabledInput" type="checkbox" /><span data-i18n="computerUse.enable">启用 Computer Use</span></label><label class="switch-row compact-switch"><input id="computerUsePublicEnabledInput" type="checkbox" /><span data-i18n="computerUse.publicEnable">允许公网 Workspace 使用</span></label><button class="button subtle ui-hidden" id="openComputerUseSettingsButton" type="button" data-icon="settings"><span data-i18n="computerUse.openSettings">打开系统权限</span></button></div>
+                  </div>
                   <div class="runtime-lsp-card">
                     <div class="runtime-lsp-head">
-                      <div><strong>LSP 语言智能</strong><p>为 AI 提供代码诊断、定义跳转、引用查找、Hover 和文档符号。每种语言的 LSP 都是独立服务器：按需下载可以减小安装包，并允许单独更新。未安装时不会伪造语义结果，但基础代码索引仍可用。</p></div>
+                      <div><strong class="icon-copy-title"><span class="inline-label-icon" data-icon="file-scan"></span><span>LSP 语言智能</span></strong><p>为 AI 提供代码诊断、定义跳转、引用查找、Hover 和文档符号。每种语言的 LSP 都是独立服务器：按需下载可以减小安装包，并允许单独更新。未安装时不会伪造语义结果，但基础代码索引仍可用。</p></div>
                       <div class="runtime-lsp-head-actions"><label class="lsp-timeout-control"><span>LSP 超时</span><div class="input-with-suffix"><input id="runtimeLspTimeoutInput" type="number" min="250" /><span>ms</span></div></label><label class="switch-row compact-switch"><input id="runtimeLspEnabledInput" type="checkbox" /><span>启用 LSP</span></label></div>
                     </div>
                     <div class="runtime-lsp-basic">
@@ -204,19 +212,19 @@
             <div class="form-section">
               <div class="settings-section-head"><div><div class="settings-title-line"><span class="settings-section-icon" data-icon="settings"></span><h2 data-i18n="settings.app.title">应用设置</h2><p class="hint" data-i18n="settings.app.desc">控制界面语言、外观、调试和后台行为。</p></div></div></div>
               <div class="grid three form-grid">
-                <div><label data-i18n="settings.language.label">界面语言</label><select id="uiLanguageInput"><option value="system" data-i18n="settings.language.system">跟随系统</option><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></div>
-                <div><label>外观 <span class="help-tip" tabindex="0" data-help="跟随系统会同步 macOS / Windows 的浅色或深色主题；亮色/暗色会覆盖系统偏好，并同步 Electron 原生菜单与窗口外观。">?</span></label><select id="appearanceInput"><option value="system">跟随系统 · 默认</option><option value="light">亮色</option><option value="dark">暗色</option></select></div>
-                <div><label>调试模式 <span class="help-tip" tabindex="0" data-help="基础：记录 Tool 名称、参数键、Workspace、耗时、结果大小与状态；详细：额外记录脱敏后的参数值。Token、授权口令、私钥、密码等敏感字段始终脱敏。">?</span></label><select id="debugModeInput"><option value="off">关闭 · 默认</option><option value="basic">基础 Trace</option><option value="detailed">详细 Trace</option></select></div>
+                <div><label class="icon-field-label"><span class="inline-label-icon" data-icon="languages"></span><span data-i18n="settings.language.label">界面语言</span></label><select id="uiLanguageInput"><option value="system" data-i18n="settings.language.system">跟随系统</option><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></div>
+                <div><label class="icon-field-label"><span class="inline-label-icon" data-icon="palette"></span><span>外观</span> <span class="help-tip" tabindex="0" data-help="跟随系统会同步 macOS / Windows 的浅色或深色主题；亮色/暗色会覆盖系统偏好，并同步 Electron 原生菜单与窗口外观。">?</span></label><select id="appearanceInput"><option value="system">跟随系统 · 默认</option><option value="light">亮色</option><option value="dark">暗色</option></select></div>
+                <div><label class="icon-field-label"><span class="inline-label-icon" data-icon="bug"></span><span>调试模式</span> <span class="help-tip" tabindex="0" data-help="基础：记录 Tool 名称、参数键、Workspace、耗时、结果大小与状态；详细：额外记录脱敏后的参数值。Token、授权口令、私钥、密码等敏感字段始终脱敏。">?</span></label><select id="debugModeInput"><option value="off">关闭 · 默认</option><option value="basic">基础 Trace</option><option value="detailed">详细 Trace</option></select></div>
               </div>
-              <label class="switch-row"><input id="launchAtLoginInput" type="checkbox" /><span>登录系统时自动启动桌面 App <span class="help-tip" tabindex="0" data-help="把 MCPort 注册为系统登录启动项。Desktop 启动后会自动管理 Runtime，无需单独配置 Runtime 自启动。">?</span></span></label>
-              <label class="switch-row" id="autoStartPublicClientRow"><input id="startTunnelWithRuntimeInput" type="checkbox" /><span>Desktop 启动后自动启动公网客户端 <span class="help-tip" tabindex="0" data-help="Cloudflare / FRP 模式下，在 Runtime 就绪后自动启动对应客户端；外部自建模式不需要此开关。">?</span></span></label>
-              <label class="switch-row"><input id="minimizeToTrayInput" type="checkbox" /><span>关闭窗口时继续在后台运行 <span class="help-tip" tabindex="0" data-help="macOS 会保留顶部菜单栏图标，Windows / Linux 会保留系统托盘图标。关闭主窗口后 Runtime 和公网客户端继续运行；从菜单栏/托盘菜单选择“退出”才会完全停止。">?</span></span></label>
-              <label class="switch-row"><input id="lowMemoryTrayInput" type="checkbox" /><span>后台低内存模式 <span class="help-tip" tabindex="0" data-help="关闭主窗口后销毁 Chromium Renderer，只保留 Main Process、Runtime 和公网客户端；再次点击 macOS 菜单栏图标或 Windows/Linux 托盘图标时重建界面。MCP 服务不会中断。">?</span></span></label>
+              <label class="switch-row"><input id="launchAtLoginInput" type="checkbox" /><span><span class="inline-label-icon" data-icon="log-in"></span>登录系统时自动启动桌面 App <span class="help-tip" tabindex="0" data-help="把 MCPort 注册为系统登录启动项。Desktop 启动后会自动管理 Runtime，无需单独配置 Runtime 自启动。">?</span></span></label>
+              <label class="switch-row" id="autoStartPublicClientRow"><input id="startTunnelWithRuntimeInput" type="checkbox" /><span><span class="inline-label-icon" data-icon="train-front-tunnel"></span>Desktop 启动后自动启动公网客户端 <span class="help-tip" tabindex="0" data-help="Cloudflare / FRP 模式下，在 Runtime 就绪后自动启动对应客户端；外部自建模式不需要此开关。">?</span></span></label>
+              <label class="switch-row"><input id="minimizeToTrayInput" type="checkbox" /><span><span class="inline-label-icon" data-icon="monitor-cog"></span>关闭窗口时继续在后台运行 <span class="help-tip" tabindex="0" data-help="macOS 会保留顶部菜单栏图标，Windows / Linux 会保留系统托盘图标。关闭主窗口后 Runtime 和公网客户端继续运行；从菜单栏/托盘菜单选择“退出”才会完全停止。">?</span></span></label>
+              <label class="switch-row"><input id="lowMemoryTrayInput" type="checkbox" /><span><span class="inline-label-icon" data-icon="memory-stick"></span>后台低内存模式 <span class="help-tip" tabindex="0" data-help="关闭主窗口后销毁 Chromium Renderer，只保留 Main Process、Runtime 和公网客户端；再次点击 macOS 菜单栏图标或 Windows/Linux 托盘图标时重建界面。MCP 服务不会中断。">?</span></span></label>
             </div>
             <div class="form-section app-update-section">
-              <div class="settings-section-head"><div><div class="settings-title-line"><span class="settings-section-icon" data-icon="download"></span><h2 data-i18n="appUpdate.title">软件更新</h2><p class="hint" data-i18n="appUpdate.desc">从 GitHub Release 检查 MCPort 的最新版本。</p></div></div></div>
+              <div class="settings-section-head"><div><div class="settings-title-line"><span class="settings-section-icon" data-icon="download"></span><h2 data-i18n="appUpdate.title">软件更新</h2></div></div></div>
               <div class="app-update-card">
-                <div><strong id="appUpdateVersion" data-i18n="appUpdate.notChecked">尚未检查</strong><p id="appUpdateStatus" class="hint" data-i18n="appUpdate.checkHint">检查会访问 GitHub，不会上传项目文件或凭据。</p></div>
+                <div><strong id="appUpdateVersion" data-i18n="appUpdate.notChecked">尚未检查</strong><p id="appUpdateStatus" class="hint ui-hidden"></p></div>
                 <div class="button-row"><button class="button subtle" id="checkAppUpdateButton" type="button" data-icon="refresh"><span id="checkAppUpdateLabel" data-i18n="appUpdate.check">检查更新</span></button><button class="button" id="openAppUpdateButton" type="button" data-icon="external" disabled><span data-i18n="appUpdate.open">打开 GitHub 下载</span></button></div>
               </div>
             </div>
@@ -273,8 +281,20 @@
       <div class="workspace-inline-body workspace-settings-single-page">
         <div class="workspace-settings-section workspace-settings-connection">
           <div class="settings-group">
-            <label class="switch-row public-toggle"><input id="currentWorkspacePublicEnabledInput" type="checkbox" /><span><strong><span>启用公网 MCP</span><span class="help-tip" tabindex="0" data-help="开启后默认使用 OAuth。公网 Host 与公网客户端仍由全局设置统一管理。">?</span></strong><small>推荐 OAuth；开启后直接复制 MCP 地址到客户端</small></span></label>
+            <label class="switch-row public-toggle"><input id="currentWorkspacePublicEnabledInput" type="checkbox" /><span><strong><span class="inline-label-icon" data-icon="globe"></span><span>启用公网 MCP</span><span class="help-tip" tabindex="0" data-help="开启后默认使用 OAuth。公网 Host 与公网客户端仍由全局设置统一管理。">?</span></strong><small data-i18n="workspace.publicCopyHint">开启后可直接复制 MCP 地址到客户端</small></span></label>
             <div id="workspacePublicSettings" class="ui-hidden">
+              <div class="workspace-connection-fields">
+                <div class="workspace-public-core-grid">
+                  <div class="workspace-public-route-field">
+                    <label>公网路径 <span class="help-tip" tabindex="0" data-help="控制公网地址中的 /w/<path>/mcp 部分。默认使用 Workspace 名称。">?</span></label>
+                    <div class="public-route-input"><span class="public-route-host" id="currentWorkspacePublicHostPrefix">https://公网 Host/w/</span><input id="currentWorkspacePublicPathInput" /><span>/mcp</span></div>
+                  </div>
+                  <div class="workspace-public-auth-field">
+                    <label>公网认证 <span class="field-recommendation" data-i18n="workspace.oauthRecommended">推荐 OAuth</span></label>
+                    <select id="currentWorkspacePublicAuthModeInput"><option value="oauth">OAuth</option><option value="token">Bearer Token</option></select>
+                  </div>
+                </div>
+              </div>
               <div id="workspaceBuiltinOauthAuthSection" class="ui-hidden">
                 <div class="workspace-oauth-primary-actions">
                   <button class="button primary" id="copyWorkspaceOauthMcpButton" data-icon="copy">复制 MCP 地址</button>
@@ -282,7 +302,7 @@
                   <span>客户端打开浏览器授权页后，MCPort 也会自动弹出“复制授权密钥”提示。</span>
                 </div>
                 <details class="inline-disclosure workspace-oauth-management">
-                  <summary>OAuth 管理与协议详情</summary>
+                  <summary><span class="inline-label-icon" data-icon="fingerprint-pattern"></span><span>OAuth 管理与协议详情</span></summary>
                   <div class="oauth-summary-box">
                     <div class="oauth-summary-item oauth-summary-issuer"><span>Issuer</span><code id="workspaceBuiltinOauthIssuer">保存公网地址后自动生成</code></div>
                     <div class="oauth-summary-item"><span>Scope</span><code>mcp</code></div>
@@ -296,10 +316,10 @@
                 <div class="workspace-oauth-primary-actions workspace-token-primary-actions">
                   <button class="button primary" id="copyWorkspaceTokenMcpButton" data-icon="copy">复制 MCP 地址</button>
                   <button class="button" id="copyWorkspaceTokenButton" data-icon="key">复制 Bearer Token</button>
-                  <span>Bearer Token 与 OAuth 使用相同的 Workspace 公网地址；重置后旧 Token 会立即失效。</span>
+                  <span data-i18n="workspace.tokenResetWarning">重置后旧 Token 会立即失效。</span>
                 </div>
                 <details class="inline-disclosure workspace-token-management">
-                  <summary>Bearer Token 管理与认证详情</summary>
+                  <summary><span class="inline-label-icon" data-icon="key-round"></span><span>Bearer Token 管理与认证详情</span></summary>
                   <div class="oauth-summary-box">
                     <div class="oauth-summary-item oauth-summary-issuer"><span>Scheme</span><code>Authorization: Bearer &lt;token&gt;</code></div>
                     <div class="oauth-summary-item"><span>范围</span><code>当前 Workspace</code></div>
@@ -315,44 +335,34 @@
                   </details>
                 </details>
               </div>
-              <details class="inline-disclosure workspace-connection-advanced">
-                <summary>认证方式与连接高级设置</summary>
-                <div class="workspace-public-core-grid">
-                  <div class="workspace-public-route-field">
-                    <label>公网路径 <span class="help-tip" tabindex="0" data-help="控制公网地址中的 /w/<path>/mcp 部分。默认使用 Workspace 名称。">?</span></label>
-                    <div class="public-route-input"><span class="public-route-host" id="currentWorkspacePublicHostPrefix">https://公网 Host/w/</span><input id="currentWorkspacePublicPathInput" /><span>/mcp</span></div>
-                  </div>
-                  <div class="workspace-public-auth-field">
-                    <label>公网认证</label>
-                    <select id="currentWorkspacePublicAuthModeInput"><option value="oauth">OAuth（推荐）</option><option value="token">Bearer Token</option></select>
-                  </div>
-                </div>
-              </details>
             </div>
           </div>
         </div>
         <details class="inline-disclosure workspace-advanced-settings">
-          <summary>高级设置 · 工具权限 / 本机命令 / 运行环境</summary>
+          <summary><span class="inline-label-icon" data-icon="triangle-alert"></span><span data-i18n="workspace.permissions.advancedTitle">高级设置 · AI 工具与操作限制</span></summary>
           <div class="workspace-advanced-settings-body">
             <div class="workspace-settings-section workspace-settings-tools">
               <div class="settings-group">
-                <div class="settings-group-head workspace-section-head"><div class="settings-title-line"><span class="settings-section-icon" data-icon="key"></span><h3>工具权限</h3><p class="hint">低频调整。公网模型默认还会经过精简的 core Tool Surface。</p></div></div>
-                <div class="workspace-security-summary" id="workspaceSecuritySummary"><span>当前安全状态</span><strong id="workspaceSecurityLabel">—</strong><small id="workspaceSecurityDetail"></small></div>
-                <label>工具档位</label>
-                <select id="currentWorkspaceToolTierInput"><option value="readonly">只读 · 浏览、搜索、状态检查</option><option value="standard">标准 · 只读 + 文件/目录写入</option><option value="full">完整 · 标准 + 命令和进程执行</option></select>
-                <p class="hint" id="workspaceToolTierHint">完整：内部能力完整；公网模型仍使用精简 Tool Surface。</p>
+                <div class="settings-group-head workspace-section-head"><div class="settings-title-line"><span class="settings-section-icon" data-icon="key"></span><h3 data-i18n="workspace.permissions.toolsTitle">向 AI 提供的工具</h3><p class="hint" data-i18n="workspace.permissions.toolsDesc">决定客户端能看到哪些工具；本地和公网连接使用同一范围。</p></div></div>
+                <div class="workspace-security-summary" id="workspaceSecuritySummary"><span data-i18n="workspace.permissions.effective">当前实际能力</span><strong id="workspaceSecurityLabel">—</strong><small id="workspaceSecurityDetail"></small></div>
+                <label data-i18n="workspace.permissions.toolRange">工具范围</label>
+                <div class="workspace-permission-checks">
+                  <label class="switch-row"><input id="currentWorkspaceReadInput" type="checkbox" checked disabled /><span data-i18n="workspace.permissions.readAccess">读取 · 浏览、搜索和状态检查</span></label>
+                  <label class="switch-row"><input id="currentWorkspaceEditInput" type="checkbox" /><span data-i18n="workspace.permissions.editAccess">编辑 · 修改文件和目录</span></label>
+                  <label class="switch-row"><input id="currentWorkspaceCommandInput" type="checkbox" /><span data-i18n="workspace.permissions.commandAccess">命令 · 启动命令和进程</span></label>
+                  <label class="switch-row"><input id="currentWorkspaceExternalNetworkInput" type="checkbox" /><span data-i18n="workspace.permissions.networkAccess">网络 · 允许访问外部网络</span></label>
+                </div>
+                <p class="hint" id="workspaceToolTierHint" data-i18n="workspace.tier.full">开发工具：提供命令和进程入口，并允许执行白名单内的命令。</p>
               </div>
             </div>
             <div class="workspace-settings-section workspace-settings-runtime">
               <div class="settings-group">
-                <div class="settings-group-head workspace-section-head"><div class="settings-title-line"><span class="settings-section-icon" data-icon="terminal"></span><h3>运行环境</h3><p class="hint">仅在需要开放本机命令、联网或覆盖 Runtime 默认值时调整。</p></div></div>
+                <div class="settings-group-head workspace-section-head"><div class="settings-title-line"><span class="settings-section-icon" data-icon="terminal"></span><h3 data-i18n="workspace.permissions.limitsTitle">操作限制</h3><p class="hint" data-i18n="workspace.permissions.limitsDesc">在已有工具范围上继续限制联网和高风险操作；命令执行由“开发工具”范围决定，并继续受白名单限制。</p></div></div>
                 <input class="ui-hidden" id="currentWorkspaceProfileNameInput" placeholder="Workspace Runtime" />
                 <div class="workspace-project-permissions">
-                  <label class="switch-row"><input id="currentWorkspaceExecutionInput" type="checkbox" /><span>允许 MCP 执行本机命令</span></label>
-                  <label class="switch-row"><input id="currentWorkspaceExternalNetworkInput" type="checkbox" /><span>允许 MCP 命令访问外部网络</span></label>
-                  <div><label>高风险确认方式</label><select id="currentWorkspaceHighRiskConfirmationModeInput"><option value="local">MCPort 本地确认（推荐）</option><option value="none">不需要确认</option></select></div>
+                  <div><label data-i18n="workspace.permissions.confirmation">高风险操作确认</label><select id="currentWorkspaceHighRiskConfirmationModeInput"><option value="local" data-i18n="workspace.permissions.localConfirmation">需要确认（推荐）</option><option value="none" data-i18n="workspace.permissions.noConfirmation">静默确认</option><option value="none_with_computer_use" data-i18n="workspace.permissions.noConfirmationWithComputerUse">完全静默</option></select></div>
                 </div>
-                <details class="inline-disclosure"><summary>Runtime 覆盖与限制</summary><label>运行环境 PATH</label><textarea id="currentWorkspaceRuntimePathInput" rows="2" placeholder="留空继承全局默认"></textarea><label>允许执行的命令</label><input id="currentWorkspaceCommandsInput" placeholder="留空继承全局" /><div class="grid three form-grid"><div><label>默认超时 ms</label><input id="currentWorkspaceDefaultTimeoutInput" type="number" placeholder="继承" /></div><div><label>最大超时 ms</label><input id="currentWorkspaceMaxTimeoutInput" type="number" placeholder="继承" /></div><div><label>最大输出 bytes</label><input id="currentWorkspaceMaxOutputInput" type="number" placeholder="继承" /></div></div></details>
+                <details class="inline-disclosure"><summary data-i18n="workspace.permissions.runtimeOverrides">命令环境与限制</summary><label>运行环境 PATH</label><textarea id="currentWorkspaceRuntimePathInput" rows="2" placeholder="留空继承全局默认"></textarea><label>允许执行的命令</label><input id="currentWorkspaceCommandsInput" placeholder="留空继承全局" /><div class="grid three form-grid"><div><label>默认超时 ms</label><input id="currentWorkspaceDefaultTimeoutInput" type="number" placeholder="继承" /></div><div><label>最大超时 ms</label><input id="currentWorkspaceMaxTimeoutInput" type="number" placeholder="继承" /></div><div><label>最大输出 bytes</label><input id="currentWorkspaceMaxOutputInput" type="number" placeholder="继承" /></div></div></details>
               </div>
             </div>
           </div>
@@ -362,7 +372,9 @@
     </div>
     <div class="toast" id="toast"></div>
     <script src="./i18n.js"></script>
-    <script src="./vendor/lucide-icons.js"></script>
+    <script src="../../node_modules/lucide/dist/umd/lucide.js"></script>
+    <script src="./vendor/lucide-adapter.js"></script>
+    <script src="./vendor/devicon-icons.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

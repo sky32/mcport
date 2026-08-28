@@ -23,4 +23,6 @@ MCPort 使用开源依赖构建 Runtime 和 Desktop。完整依赖树及其版�
 
 ## Electron 与 npm 依赖
 
-Electron、Model Context Protocol SDK、Zod、OIDC Provider、Tree-sitter WASM、Undici、Jose 等依赖的许可证随 npm 安装目录中的许可证文件提供。发布二进制前应使用当前 lockfile 生成依赖清单，并复核新增依赖的许可证兼容性。
+Electron、Model Context Protocol SDK、Zod、OIDC Provider、Tree-sitter WASM、Undici、Jose 等依赖的许可证随 npm 安装目录中的许可证文件提供。Computer Use 使用 Apache-2.0 许可的 `@nut-tree-fork/libnut-*` 平台原生包。发布二进制前应使用当前 lockfile 生成依赖清单，并复核新增依赖的许可证兼容性。
+
+Renderer 内置了 Lucide 与 Devicon 的精简 SVG 子集，分别遵循 ISC 与 MIT 许可证；只包含界面实际使用的图标，不依赖在线 CDN。

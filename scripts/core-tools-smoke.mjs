@@ -89,6 +89,13 @@ await writeFile(path.join(workspace, 'src', 'beta.ts'), `export function beta(va
 `, 'utf8');
 await writeFile(path.join(workspace, 'src', 'graph-target.ts'), `export const graphTarget = 7;\n`, 'utf8');
 await writeFile(path.join(workspace, 'src', 'graph-source.ts'), `import { graphTarget } from './graph-target.js';\nexport const graphSource = graphTarget;\n`, 'utf8');
+await writeFile(path.join(workspace, 'src', 'FileBrowserService.php'), `<?php
+final class FileBrowserService {
+  private function detectEncoding(string $content): string {
+    return str_starts_with($content, "\\xEF\\xBB\\xBF") ? 'UTF-8' : 'UTF-8';
+  }
+}
+`, 'utf8');
 await writeFile(path.join(workspace, 'tiny.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2Y6sAAAAASUVORK5CYII=', 'base64'));
 await mkdir(path.join(workspace, 'release', 'generated-app'), { recursive: true });
 await writeFile(path.join(workspace, 'release', 'generated-app', 'package.json'), '{"name":"should-be-ignored"}\n', 'utf8');
@@ -152,7 +159,10 @@ const child = spawn(process.execPath, ['dist/server.js'], {
     ADMIN_ENABLED: 'false',
     WORKSPACE_ROOT: workspaceRoot,
     STATE_DB_PATH: stateDbPath,
-    ALLOW_COMMAND_EXECUTION: 'true',
+    // Command execution is now determined by the connected Workspace tool tier.
+    // Keep the legacy Runtime flag disabled so this smoke proves full-tier
+    // commands are not blocked by the removed second switch.
+    ALLOW_COMMAND_EXECUTION: 'false',
     REQUIRE_HIGH_RISK_CONFIRMATION: 'false',
     ALLOWED_COMMANDS: 'node',
     MAX_COMMAND_OUTPUT_BYTES: '65536',
@@ -273,6 +283,9 @@ try {
   const mappedFile = repoMap.files?.find((item) => item.path === 'src/alpha.ts');
   if (!mappedFile?.symbols?.some((item) => item.qualifiedName === 'WorkspaceService.save')) {
     throw new Error(`repo_map missed WorkspaceService.save: ${JSON.stringify(repoMap)}`);
+  }
+  if (repoMap.index?.languages && !repoMap.index.languages.includes('php')) {
+    throw new Error(`repo_map did not retain PHP after a grammar failure in one file: ${JSON.stringify(repoMap.index)}`);
   }
 
   const codeSearch = data(await client.callTool({ name: 'code_search', arguments: { query: 'WorkspaceService.save', mode: 'symbol' } }));

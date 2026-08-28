@@ -153,11 +153,17 @@ try {
     || restoredSettings.uiLanguage !== 'system'
     || restoredSettings.debugMode !== 'off'
     || restoredSettings.lowMemoryTray !== true
+    || restoredSettings.computerUseEnabled !== false
+    || restoredSettings.computerUsePublicEnabled !== false
     || restoredSettings.publicAccessProvider !== 'cloudflare'
     || restoredSettings.publicClientMode !== 'managed'
     || restoredSettings.publicClientVersion !== ''
+    || restoredSettings.cloudflareTransportProtocol !== 'auto'
+    || restoredSettings.cloudflareEdgeIpVersion !== 'auto'
     || restoredSettings.frpServerPort !== 7000
     || restoredSettings.frpRemotePort !== 18443
+    || restoredSettings.frpTransportProtocol !== 'tcp'
+    || restoredSettings.frpUseCompression !== false
   ) {
     throw new Error(`Current Desktop defaults were not preserved: ${JSON.stringify(restoredSettings)}`);
   }

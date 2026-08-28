@@ -49,7 +49,11 @@ function profileFromRow(row) {
     allowCommandExecution: row.allow_command_execution === null ? null : row.allow_command_execution === 1,
     allowExternalNetwork: row.allow_external_network === null ? null : row.allow_external_network === 1,
     requireHighRiskConfirmation: row.require_high_risk_confirmation === null ? null : row.require_high_risk_confirmation === 1,
-    highRiskConfirmationMode: row.high_risk_confirmation_mode === 'none' ? 'none' : row.high_risk_confirmation_mode === null && row.require_high_risk_confirmation === null ? null : 'local',
+    highRiskConfirmationMode: row.high_risk_confirmation_mode === 'none_with_computer_use'
+      ? 'none_with_computer_use'
+      : row.high_risk_confirmation_mode === 'none'
+        ? 'none'
+        : row.high_risk_confirmation_mode === null && row.require_high_risk_confirmation === null ? null : 'local',
     maxCommandOutputBytes: row.max_command_output_bytes,
     defaultCommandTimeoutMs: row.default_command_timeout_ms,
     maxCommandTimeoutMs: row.max_command_timeout_ms,
@@ -86,7 +90,9 @@ export function defaultRuntimeSettingsFromEnv(env = process.env) {
     allowCommandExecution: bool('ALLOW_COMMAND_EXECUTION', false),
     allowExternalNetwork: bool('ALLOW_EXTERNAL_NETWORK', false),
     requireHighRiskConfirmation: bool('REQUIRE_HIGH_RISK_CONFIRMATION', true),
-    highRiskConfirmationMode: String(env.HIGH_RISK_CONFIRMATION_MODE || (bool('REQUIRE_HIGH_RISK_CONFIRMATION', true) ? 'local' : 'none')).trim().toLowerCase() === 'none' ? 'none' : 'local',
+    highRiskConfirmationMode: String(env.HIGH_RISK_CONFIRMATION_MODE || (bool('REQUIRE_HIGH_RISK_CONFIRMATION', true) ? 'local' : 'none')).trim().toLowerCase() === 'none_with_computer_use'
+      ? 'none_with_computer_use'
+      : String(env.HIGH_RISK_CONFIRMATION_MODE || (bool('REQUIRE_HIGH_RISK_CONFIRMATION', true) ? 'local' : 'none')).trim().toLowerCase() === 'none' ? 'none' : 'local',
     networkIsolationRequired: bool('NETWORK_ISOLATION_REQUIRED', true),
     lspEnabled: bool('LSP_ENABLED', true),
     lspRequestTimeoutMs: int('LSP_REQUEST_TIMEOUT_MS', 8_000),
@@ -117,7 +123,7 @@ export function initializeRuntimeDatabase(db) {
       allow_command_execution INTEGER CHECK(allow_command_execution IN (0, 1) OR allow_command_execution IS NULL),
       allow_external_network INTEGER CHECK(allow_external_network IN (0, 1) OR allow_external_network IS NULL),
       require_high_risk_confirmation INTEGER CHECK(require_high_risk_confirmation IN (0, 1) OR require_high_risk_confirmation IS NULL),
-      high_risk_confirmation_mode TEXT CHECK(high_risk_confirmation_mode IN ('client', 'local', 'none') OR high_risk_confirmation_mode IS NULL),
+      high_risk_confirmation_mode TEXT CHECK(high_risk_confirmation_mode IN ('client', 'local', 'none', 'none_with_computer_use') OR high_risk_confirmation_mode IS NULL),
       max_command_output_bytes INTEGER,
       default_command_timeout_ms INTEGER,
       max_command_timeout_ms INTEGER,
@@ -134,7 +140,66 @@ export function initializeRuntimeDatabase(db) {
   const profileColumns = new Set(db.prepare('PRAGMA table_info(runtime_profiles)').all().map((row) => row.name));
   if (!profileColumns.has('allow_external_network')) db.exec('ALTER TABLE runtime_profiles ADD COLUMN allow_external_network INTEGER CHECK(allow_external_network IN (0, 1) OR allow_external_network IS NULL)');
   if (!profileColumns.has('require_high_risk_confirmation')) db.exec('ALTER TABLE runtime_profiles ADD COLUMN require_high_risk_confirmation INTEGER CHECK(require_high_risk_confirmation IN (0, 1) OR require_high_risk_confirmation IS NULL)');
-  if (!profileColumns.has('high_risk_confirmation_mode')) db.exec("ALTER TABLE runtime_profiles ADD COLUMN high_risk_confirmation_mode TEXT CHECK(high_risk_confirmation_mode IN ('client', 'local', 'none') OR high_risk_confirmation_mode IS NULL)");
+  if (!profileColumns.has('high_risk_confirmation_mode')) db.exec("ALTER TABLE runtime_profiles ADD COLUMN high_risk_confirmation_mode TEXT CHECK(high_risk_confirmation_mode IN ('client', 'local', 'none', 'none_with_computer_use') OR high_risk_confirmation_mode IS NULL)");
+
+  const profileTableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='runtime_profiles'").get()?.sql || '';
+  if (!profileTableSql.includes("'none_with_computer_use'")) {
+    db.exec('PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;');
+    try {
+      db.exec(`
+        ALTER TABLE workspace_runtime_profiles RENAME TO workspace_runtime_profiles_legacy;
+        ALTER TABLE runtime_profiles RENAME TO runtime_profiles_legacy;
+        CREATE TABLE runtime_profiles (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          runtime_path TEXT,
+          allowed_commands TEXT,
+          allow_command_execution INTEGER CHECK(allow_command_execution IN (0, 1) OR allow_command_execution IS NULL),
+          allow_external_network INTEGER CHECK(allow_external_network IN (0, 1) OR allow_external_network IS NULL),
+          require_high_risk_confirmation INTEGER CHECK(require_high_risk_confirmation IN (0, 1) OR require_high_risk_confirmation IS NULL),
+          high_risk_confirmation_mode TEXT CHECK(high_risk_confirmation_mode IN ('client', 'local', 'none', 'none_with_computer_use') OR high_risk_confirmation_mode IS NULL),
+          max_command_output_bytes INTEGER,
+          default_command_timeout_ms INTEGER,
+          max_command_timeout_ms INTEGER,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+      `);
+      const legacyProfileColumns = new Set(db.prepare('PRAGMA table_info(runtime_profiles_legacy)').all().map((row) => row.name));
+      const legacyWorkspaceColumns = new Set(db.prepare('PRAGMA table_info(workspace_runtime_profiles_legacy)').all().map((row) => row.name));
+      const timestamp = new Date().toISOString();
+      const profileFields = ['id', 'name', 'runtime_path', 'allowed_commands', 'allow_command_execution', 'allow_external_network', 'require_high_risk_confirmation', 'high_risk_confirmation_mode', 'max_command_output_bytes', 'default_command_timeout_ms', 'max_command_timeout_ms', 'created_at', 'updated_at'];
+      const profileParams = [];
+      const profileSelect = profileFields.map((field) => {
+        if (legacyProfileColumns.has(field)) return field;
+        if (field === 'created_at' || field === 'updated_at') {
+          profileParams.push(timestamp);
+          return '?';
+        }
+        return 'NULL';
+      }).join(', ');
+      db.prepare(`INSERT INTO runtime_profiles (${profileFields.join(', ')}) SELECT ${profileSelect} FROM runtime_profiles_legacy`).run(...profileParams);
+      db.exec(`
+        CREATE TABLE workspace_runtime_profiles (
+          workspace TEXT PRIMARY KEY,
+          profile_id TEXT NOT NULL REFERENCES runtime_profiles(id) ON DELETE CASCADE,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+      `);
+      const workspaceUpdatedAt = legacyWorkspaceColumns.has('updated_at') ? 'updated_at' : '?';
+      db.prepare(`INSERT INTO workspace_runtime_profiles (workspace, profile_id, updated_at) SELECT workspace, profile_id, ${workspaceUpdatedAt} FROM workspace_runtime_profiles_legacy`).run(...(legacyWorkspaceColumns.has('updated_at') ? [] : [timestamp]));
+      db.exec(`
+        DROP TABLE workspace_runtime_profiles_legacy;
+        DROP TABLE runtime_profiles_legacy;
+        COMMIT;
+      `);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    } finally {
+      db.exec('PRAGMA foreign_keys=ON;');
+    }
+  }
 
   if (!tableExists(db, 'executor_profiles')) return;
   db.exec('PRAGMA foreign_keys=OFF');
@@ -212,10 +277,12 @@ export class RuntimeRepository {
       allowCommandExecution: this.getJson(RUNTIME_KEYS.allowCommandExecution) ?? this.defaults.allowCommandExecution,
       allowExternalNetwork: this.getJson(RUNTIME_KEYS.allowExternalNetwork) ?? this.defaults.allowExternalNetwork,
       requireHighRiskConfirmation: this.getJson(RUNTIME_KEYS.requireHighRiskConfirmation) ?? this.defaults.requireHighRiskConfirmation,
-      highRiskConfirmationMode: this.getJson(RUNTIME_KEYS.highRiskConfirmationMode) === 'none'
-        || (this.getJson(RUNTIME_KEYS.highRiskConfirmationMode) == null && this.getJson(RUNTIME_KEYS.requireHighRiskConfirmation) === false)
-        ? 'none'
-        : 'local',
+      highRiskConfirmationMode: this.getJson(RUNTIME_KEYS.highRiskConfirmationMode) === 'none_with_computer_use'
+        ? 'none_with_computer_use'
+        : this.getJson(RUNTIME_KEYS.highRiskConfirmationMode) === 'none'
+          || (this.getJson(RUNTIME_KEYS.highRiskConfirmationMode) == null && this.getJson(RUNTIME_KEYS.requireHighRiskConfirmation) === false)
+          ? 'none'
+          : 'local',
       networkIsolationRequired: this.getJson(RUNTIME_KEYS.networkIsolationRequired) ?? this.defaults.networkIsolationRequired,
       lspEnabled: this.getJson(RUNTIME_KEYS.lspEnabled) ?? this.defaults.lspEnabled,
       lspRequestTimeoutMs: this.getJson(RUNTIME_KEYS.lspRequestTimeoutMs) ?? this.defaults.lspRequestTimeoutMs,

@@ -119,7 +119,31 @@ try {
     throw new Error(`managed CSS resolution failed: ${JSON.stringify(resolved)}`);
   }
 
+  for (const [language, serverCommand] of [
+    ['python', 'pyright-langserver'],
+    ['json', 'vscode-json-language-server'],
+    ['yaml', 'yaml-language-server'],
+    ['php', 'intelephense'],
+    ['vue', 'vue-language-server'],
+    ['bash', 'bash-language-server'],
+    ['dockerfile', 'docker-langserver'],
+  ]) {
+    const managedBin = path.join(managedRoot, language, 'node_modules', '.bin', serverCommand);
+    await makeExecutable(managedBin);
+    resolved = await resolveLspExecutable(workspace, serverCommand, runtimeBin, managedRoot);
+    if (resolved?.source !== 'managed' || resolved.launchMode !== 'direct' || resolved.path !== managedBin) {
+      throw new Error(`managed ${language} resolution failed: ${JSON.stringify(resolved)}`);
+    }
+  }
+
   await rm(managedEntryPoint, { force: true });
+  const managedNative = path.join(managedRoot, 'typescript', 'node_modules', '.bin', process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo');
+  await makeExecutable(managedNative);
+  resolved = await resolveLspExecutable(workspace, 'typescript-language-server', runtimeBin, managedRoot);
+  if (resolved?.source !== 'managed' || resolved.launchMode !== 'direct' || resolved.path !== managedNative || JSON.stringify(resolved.launchArgs) !== JSON.stringify(['--lsp', '--stdio'])) {
+    throw new Error(`managed TypeScript native LSP resolution failed: ${JSON.stringify(resolved)}`);
+  }
+  await rm(managedNative, { force: true });
   resolved = await resolveLspExecutable(workspace, 'typescript-language-server', runtimeBin, managedRoot);
   if (resolved?.source !== 'runtime-path' || resolved.launchMode !== 'direct' || resolved.path !== runtimeExecutable) {
     throw new Error(`runtime PATH fallback failed: ${JSON.stringify(resolved)}`);

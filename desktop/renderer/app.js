@@ -11,8 +11,12 @@ let healthRefreshPending = false;
 let workspaceHealthCache = new Map();
 let healthTimer = null;
 let automaticHealthTimer = null;
-const INITIAL_HEALTH_WARMUP_MS = 4500;
-const HEALTH_SETTLE_MS = 1200;
+let automaticHealthDeferred = false;
+let lastHealthCheckedAt = 0;
+const INITIAL_HEALTH_WARMUP_MS = 8000;
+const HEALTH_SETTLE_MS = 3500;
+const HEALTH_REFRESH_INTERVAL_MS = 90_000;
+const HEALTH_MIN_AUTO_INTERVAL_MS = 15_000;
 let automaticHealthReadyAt = Date.now() + INITIAL_HEALTH_WARMUP_MS;
 let editingWorkspaceName = null;
 let lastRuntimePhase = null;
@@ -42,6 +46,37 @@ function localizedText(value) {
   return i18n.text(value);
 }
 
+let autoScrollResizeTimer = null;
+
+function updateAutoScroll(element) {
+  const track = element?.querySelector(':scope > .auto-scroll-track');
+  if (!track) return;
+  element.classList.remove('auto-scrolling');
+  track.style.removeProperty('--auto-scroll-distance');
+  track.style.removeProperty('--auto-scroll-duration');
+  const distance = Math.max(0, track.scrollWidth - element.clientWidth);
+  if (distance <= 4) return;
+  track.style.setProperty('--auto-scroll-distance', `${distance}px`);
+  track.style.setProperty('--auto-scroll-duration', `${Math.min(18, Math.max(8, 7 + distance / 28))}s`);
+  element.classList.add('auto-scrolling');
+}
+
+function setAutoScrollText(element, value, tagName = 'span') {
+  if (!element) return;
+  const text = String(value ?? '');
+  const track = document.createElement(tagName);
+  track.className = 'auto-scroll-track';
+  track.textContent = text;
+  element.classList.add('auto-scroll-text');
+  element.title = text;
+  element.replaceChildren(track);
+  requestAnimationFrame(() => updateAutoScroll(element));
+}
+
+function refreshAutoScroll(root = document) {
+  for (const element of root.querySelectorAll?.('.auto-scroll-text') || []) updateAutoScroll(element);
+}
+
 function localizedMultiline(value) {
   return String(value ?? '')
     .split('\n')
@@ -57,45 +92,49 @@ function renderAppUpdate() {
   const checkLabel = $('checkAppUpdateLabel');
   const open = $('openAppUpdateButton');
   if (!version || !status || !check || !checkLabel || !open) return;
+  const showStatus = (message = '') => {
+    status.textContent = message;
+    status.classList.toggle('ui-hidden', !message);
+  };
   check.disabled = appUpdateChecking;
   checkLabel.textContent = appUpdateChecking ? t('appUpdate.checking') : t('appUpdate.check');
   open.disabled = !appUpdateResult?.updateAvailable || !appUpdateResult?.releaseUrl || appUpdateChecking;
   if (appUpdateChecking) {
     version.textContent = t('appUpdate.checking');
-    status.textContent = t('appUpdate.checkHint');
+    showStatus();
     return;
   }
   if (!appUpdateResult) {
     version.textContent = t('appUpdate.notChecked');
-    status.textContent = t('appUpdate.checkHint');
+    showStatus();
     return;
   }
   if (appUpdateResult.error === 'not_configured') {
     version.textContent = t('appUpdate.notChecked');
-    status.textContent = t('appUpdate.notConfigured');
+    showStatus(t('appUpdate.notConfigured'));
     return;
   }
   if (appUpdateResult.error === 'not_found') {
     version.textContent = `v${appUpdateResult.currentVersion}`;
-    status.textContent = t('appUpdate.notFound');
+    showStatus(t('appUpdate.notFound'));
     return;
   }
   if (appUpdateResult.error === 'rate_limited') {
     version.textContent = `v${appUpdateResult.currentVersion}`;
-    status.textContent = t('appUpdate.rateLimited');
+    showStatus(t('appUpdate.rateLimited'));
     return;
   }
   if (appUpdateResult.error) {
     version.textContent = `v${appUpdateResult.currentVersion}`;
-    status.textContent = t(appUpdateResult.error === 'invalid_response' ? 'appUpdate.invalidResponse' : 'appUpdate.networkError');
+    showStatus(t(appUpdateResult.error === 'invalid_response' ? 'appUpdate.invalidResponse' : 'appUpdate.networkError'));
     return;
   }
   version.textContent = appUpdateResult.updateAvailable
     ? t('appUpdate.available', { version: `v${appUpdateResult.latestVersion}` })
     : t('appUpdate.current', { version: `v${appUpdateResult.currentVersion}` });
-  status.textContent = appUpdateResult.updateAvailable
+  showStatus(appUpdateResult.updateAvailable
     ? t('appUpdate.downloadHint', { target: appUpdateResult.downloadUrl ? 'GitHub Release asset' : 'GitHub Release page' })
-    : t('appUpdate.checkHint');
+    : '');
 }
 
 async function checkAppUpdate() {
@@ -175,20 +214,6 @@ const statusLabels = {
   stopping: '停止中',
   error: '启动失败',
 };
-const statusPhaseKeys = {
-  stopped: 'status.phase.stopped',
-  starting: 'status.phase.starting',
-  running: 'status.phase.running',
-  stopping: 'status.phase.stopping',
-  error: 'status.phase.error',
-};
-
-function statusLabel(phase, fallback = '') {
-  return statusPhaseKeys[phase]
-    ? t(statusPhaseKeys[phase])
-    : localizedText(fallback || statusLabels[phase] || phase || '');
-}
-
 function iconMarkup(name) {
   return `<span class="button-icon">${window.RemoteWorkspaceIcons?.render(name) || ''}</span>`;
 }
@@ -215,9 +240,8 @@ function showHelpTooltip(target) {
     helpTooltip.setAttribute('role', 'tooltip');
     document.body.appendChild(helpTooltip);
   }
-  const sidebarTip = target.classList?.contains('sidebar-status-item');
-  const structuredTip = sidebarTip || target.classList?.contains('workspace-status-item');
-  helpTooltip.className = `help-tooltip-popover${sidebarTip ? ' sidebar-help-tooltip' : ''}`;
+  const structuredTip = target.classList?.contains('workspace-status-item');
+  helpTooltip.className = 'help-tooltip-popover';
   helpTooltip.replaceChildren();
   for (const line of String(text).split('\n').filter(Boolean)) {
     const row = document.createElement('div');
@@ -249,16 +273,6 @@ function showHelpTooltip(target) {
   const anchor = target.getBoundingClientRect();
   const tip = helpTooltip.getBoundingClientRect();
   const margin = 12;
-  if (sidebarTip) {
-    const left = Math.min(anchor.right + 10, window.innerWidth - tip.width - margin);
-    const top = Math.min(
-      Math.max(margin, anchor.top + anchor.height / 2 - tip.height / 2),
-      window.innerHeight - tip.height - margin,
-    );
-    helpTooltip.style.left = `${Math.max(margin, left)}px`;
-    helpTooltip.style.top = `${top}px`;
-    return;
-  }
   const left = Math.min(
     Math.max(margin, anchor.left + anchor.width / 2 - tip.width / 2),
     window.innerWidth - tip.width - margin,
@@ -273,19 +287,19 @@ function showHelpTooltip(target) {
 }
 
 document.addEventListener('mouseover', (event) => {
-  const tip = event.target.closest?.('.help-tip, .sidebar-status-item[data-help], .workspace-status-item[data-help]');
+  const tip = event.target.closest?.('.help-tip, .workspace-status-item[data-help]');
   if (tip) showHelpTooltip(tip);
 });
 document.addEventListener('mouseout', (event) => {
-  const tip = event.target.closest?.('.help-tip, .sidebar-status-item[data-help], .workspace-status-item[data-help]');
+  const tip = event.target.closest?.('.help-tip, .workspace-status-item[data-help]');
   if (tip && !tip.contains(event.relatedTarget)) hideHelpTooltip();
 });
 document.addEventListener('focusin', (event) => {
-  const tip = event.target.closest?.('.help-tip, .sidebar-status-item[data-help], .workspace-status-item[data-help]');
+  const tip = event.target.closest?.('.help-tip, .workspace-status-item[data-help]');
   if (tip) showHelpTooltip(tip);
 });
 document.addEventListener('focusout', (event) => {
-  if (event.target.closest?.('.help-tip, .sidebar-status-item[data-help], .workspace-status-item[data-help]')) hideHelpTooltip();
+  if (event.target.closest?.('.help-tip, .workspace-status-item[data-help]')) hideHelpTooltip();
 });
 window.addEventListener('resize', hideHelpTooltip);
 window.addEventListener('scroll', hideHelpTooltip, true);
@@ -364,12 +378,23 @@ function workspaceHealth(workspaceName) {
   return workspaceHealthCache.get(workspaceName) || null;
 }
 
-function probePresentation(probe, fallback = '待检查') {
+function probePresentation(probe, fallback = t('health.pending')) {
   if (!probe) return { label: fallback, tone: 'muted' };
-  if (probe.status === 'healthy') return { label: probe.latencyMs == null ? '正常' : `正常 · ${probe.latencyMs}ms`, tone: 'good' };
-  if (probe.status === 'unhealthy') return { label: `异常 · ${probe.message || '连接失败'}`, tone: 'bad' };
-  if (probe.status === 'disabled') return { label: '未启用', tone: 'muted' };
-  return { label: probe.message || '未运行', tone: 'bad' };
+  if (probe.status === 'healthy') return {
+    label: probe.latencyMs == null ? t('health.available') : t('health.availableLatency', { latency: probe.latencyMs }),
+    tone: 'good',
+  };
+  if (probe.status === 'unhealthy') return { label: t('health.issue'), tone: 'bad' };
+  if (probe.status === 'disabled') return { label: t('health.disabled'), tone: 'muted' };
+  return { label: t('health.notRunning'), tone: 'bad' };
+}
+
+function healthLastCheckedText() {
+  if (!lastHealthCheckedAt) return t('health.notChecked');
+  const language = i18n.getLanguage?.() || document.documentElement.lang || 'zh-CN';
+  const time = new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .format(new Date(lastHealthCheckedAt));
+  return t('health.lastChecked', { time });
 }
 
 function healthErrorCount() {
@@ -385,143 +410,8 @@ function healthErrorCount() {
   return count;
 }
 
-function averageLatency(kind) {
-  const values = [...workspaceHealthCache.values()]
-    .map((health) => health?.[kind])
-    .filter((probe) => probe?.status === 'healthy' && Number.isFinite(probe.latencyMs))
-    .map((probe) => probe.latencyMs);
-  if (!values.length) return null;
-  return {
-    average: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length),
-    min: Math.min(...values),
-    max: Math.max(...values),
-    count: values.length,
-  };
-}
-
-function healthDetailText() {
-  const issues = [];
-  for (const health of workspaceHealthCache.values()) {
-    if (health.local?.status !== 'healthy') issues.push(`${health.workspace} 本地：${health.local?.message || '未运行'}`);
-    const service = state?.settings?.workspaceServices?.find((item) => item.workspace === health.workspace);
-    const publicConfigured = state?.settings?.publicAccessProvider === 'trycloudflare'
-      ? Boolean(state?.tunnel?.publicUrl)
-      : Boolean(state?.settings?.tunnelBaseDomain);
-    if (service?.enabled && service.publicEnabled && publicConfigured && health.public?.status !== 'healthy') {
-      issues.push(`${health.workspace} 公网：${health.public?.message || '未运行'}`);
-    }
-  }
-  return issues.length ? issues.join('\n') : '';
-}
-
 function renderGlobalStatus() {
-  if (!state) return;
-  const tunnelCard = $('globalTunnelCard');
-  const healthCard = $('globalHealthCard');
-  const latencyCard = $('globalLatencyCard');
-  const enabledServices = state.settings.workspaceServices.filter((item) => item.enabled);
-  const publicServices = enabledServices.filter((item) => item.publicEnabled);
-  const providerName = state.settings.publicAccessProvider === 'frp'
-    ? 'FRP'
-    : state.settings.publicAccessProvider === 'trycloudflare'
-      ? 'TryCloudflare'
-      : state.settings.publicAccessProvider === 'external' ? t('external.selfManaged') : 'Cloudflare';
-  const clientMode = state.settings.publicAccessProvider === 'external'
-    ? t('status.userManaged')
-    : state.settings.publicClientMode === 'custom' ? t('publicClient.custom') : t('publicClient.appManaged');
-
-  tunnelCard.className = `sidebar-status-item ${state.tunnel.phase === 'running' ? 'good' : state.tunnel.phase === 'error' ? 'bad' : ''}`.trim();
-  $('globalTunnelStatus').textContent = state.settings.publicAccessProvider === 'external'
-    ? t(state.settings.tunnelBaseDomain ? 'status.externalAccess' : 'status.notConfigured')
-    : statusLabel(state.tunnel.phase);
-  $('navWorkspaceCount').textContent = String(workspaceListCache.length);
-  tunnelCard.dataset.help = localizedMultiline([
-    `接入方式：${providerName}`,
-    `客户端：${clientMode}`,
-    t('status.runtime', { value: statusLabel(state.tunnel.phase) }),
-    `公网 Host：${state.settings.publicAccessProvider === 'trycloudflare' ? (state.tunnel.publicUrl || t('tunnel.autoAddress')) : (state.settings.tunnelBaseDomain || t('status.notConfigured'))}`,
-    `项目：${enabledServices.length}/${workspaceListCache.length} 已开启 MCP`,
-    `公网路由：${publicServices.length} 个已启用`,
-    state.settings.publicAccessProvider === 'frp' && state.settings.frpSubdomain ? `FRP Subdomain：${state.settings.frpSubdomain}` : '',
-    state.tunnel.pid ? `PID：${state.tunnel.pid}` : '',
-    state.tunnel.error ? `错误：${state.tunnel.error}` : '',
-  ].filter(Boolean).join('\n'));
-
-  if (state.runtime.phase === 'error') {
-    $('globalHealthStatus').textContent = t('status.serviceError');
-    healthCard.className = 'sidebar-status-item bad';
-    healthCard.dataset.help = localizedMultiline([
-      t('status.runtime', { value: statusLabel(state.runtime.phase) }),
-      t('status.workspace', { count: workspaceListCache.length }),
-      state.runtime.error ? t('status.runtimeError', { value: state.runtime.error }) : '',
-      t('status.recovery'),
-    ].filter(Boolean).join('\n'));
-  } else if (state.runtime.phase === 'starting' || state.runtime.phase === 'stopping') {
-    $('globalHealthStatus').textContent = t('status.recovering');
-    healthCard.className = 'sidebar-status-item';
-    healthCard.dataset.help = [
-      t('status.runtime', { value: statusLabel(state.runtime.phase) }),
-      t('status.workspace', { count: workspaceListCache.length }),
-      t('status.runtimeReadyCheck'),
-    ].join('\n');
-  } else if (healthChecking) {
-    $('globalHealthStatus').textContent = t('status.checking');
-    healthCard.className = 'sidebar-status-item';
-    healthCard.dataset.help = [
-      t('status.runtime', { value: statusLabel(state.runtime.phase) }),
-      t('status.workspace', { count: workspaceListCache.length }),
-      t('status.mcpCheck'),
-    ].join('\n');
-  } else if (!workspaceHealthCache.size) {
-    $('globalHealthStatus').textContent = t(workspaceListCache.length ? 'status.pending' : 'status.noWorkspace');
-    healthCard.className = 'sidebar-status-item';
-    healthCard.dataset.help = [
-      t('status.runtime', { value: statusLabel(state.runtime.phase) }),
-      t('status.workspace', { count: workspaceListCache.length }),
-      t(workspaceListCache.length ? 'status.notProbed' : 'status.addWorkspaceToCheck'),
-    ].join('\n');
-  } else {
-    const errors = healthErrorCount();
-    $('globalHealthStatus').textContent = errors ? t('status.issueCount', { count: errors }) : t('status.allHealthy');
-    healthCard.className = `sidebar-status-item ${errors ? 'bad' : 'good'}`;
-    healthCard.dataset.help = localizedMultiline([
-      t('status.runtime', { value: statusLabel(state.runtime.phase) }),
-      t('status.workspaceChecked', { checked: workspaceHealthCache.size, total: workspaceListCache.length }),
-      t(errors ? 'status.healthResult' : 'status.healthOk', errors ? { count: errors } : undefined),
-      healthDetailText(),
-    ].filter(Boolean).join('\n'));
-  }
-
-  const localLatency = averageLatency('local');
-  const publicLatency = averageLatency('public');
-  const latencyStatus = $('globalLatencyStatus');
-  latencyStatus.replaceChildren();
-  if (localLatency || publicLatency) {
-    const localValue = document.createElement('span');
-    localValue.className = `latency-value ${localLatency && localLatency.average >= 1000 ? 'warn' : ''}`.trim();
-    localValue.textContent = localLatency ? String(localLatency.average) : '—';
-    const separator = document.createElement('span');
-    separator.className = 'latency-separator';
-    separator.textContent = ' / ';
-    const publicValue = document.createElement('span');
-    publicValue.className = `latency-value ${publicLatency && publicLatency.average >= 1000 ? 'warn' : ''}`.trim();
-    publicValue.textContent = publicLatency ? String(publicLatency.average) : '—';
-    const unit = document.createElement('span');
-    unit.className = 'latency-unit';
-    unit.textContent = 'ms';
-    latencyStatus.append(localValue, separator, publicValue, unit);
-  } else {
-    latencyStatus.textContent = '—';
-  }
-  latencyCard.className = 'sidebar-status-item';
-  latencyCard.dataset.help = localizedMultiline([
-    localLatency
-      ? `本地：${localLatency.average}ms（${localLatency.min}–${localLatency.max}ms，${localLatency.count} 个 Workspace）`
-      : `本地：暂无有效延迟（${enabledServices.length} 个已开启）`,
-    publicLatency
-      ? `公网：${publicLatency.average}ms（${publicLatency.min}–${publicLatency.max}ms，${publicLatency.count} 个 Workspace）`
-      : `公网：暂无有效延迟（${publicServices.length} 个已启用路由）`,
-  ].join('\n'));
+  if (state) $('navWorkspaceCount').textContent = String(workspaceListCache.length);
 }
 
 function logSeverity(line) {
@@ -625,16 +515,32 @@ function updateWorkspaceBuiltinOauthPreview() {
 }
 
 function renderWorkspaceToolTier() {
-  const tier = $('currentWorkspaceToolTierInput').value;
+  const tier = $('currentWorkspaceCommandInput')?.checked
+    ? 'full'
+    : $('currentWorkspaceEditInput')?.checked ? 'standard' : 'readonly';
+  const edit = $('currentWorkspaceEditInput');
+  const command = $('currentWorkspaceCommandInput');
+  if (edit && command) {
+    if (command.checked) edit.checked = true;
+  }
   const hints = {
     readonly: t('workspace.tier.readonly'),
     standard: t('workspace.tier.standard'),
     full: t('workspace.tier.full'),
   };
-  $('workspaceToolTierHint').textContent = hints[tier] || hints.full;
+  if ($('workspaceToolTierHint')) $('workspaceToolTierHint').textContent = hints[tier] || hints.full;
   const service = currentWorkspaceService();
   if (service) renderWorkspaceSecuritySummary({ ...service, toolTier: tier }, workspaceProfile(editingWorkspaceName || service.workspace));
   renderWorkspaceConnectionCard();
+}
+
+function syncWorkspacePermissionChecks(changedId) {
+  const edit = $('currentWorkspaceEditInput');
+  const command = $('currentWorkspaceCommandInput');
+  if (!edit || !command) return;
+  if (changedId === 'currentWorkspaceCommandInput' && command.checked) edit.checked = true;
+  if (changedId === 'currentWorkspaceEditInput' && !edit.checked) command.checked = false;
+  renderWorkspaceToolTier();
 }
 
 function workspaceToolTierLabel(tier) {
@@ -682,7 +588,7 @@ async function removeWorkspace(workspace) {
   }
 }
 
-function makeWorkspaceStatus(label, value, tone = '', detail = '', action = null) {
+function makeWorkspaceStatus(label, value, tone = '', detail = '', action = null, icon = '') {
   const item = document.createElement('div');
   item.className = `workspace-status-item ${tone}`.trim();
   if (detail) {
@@ -719,6 +625,7 @@ function makeWorkspaceStatus(label, value, tone = '', detail = '', action = null
     head.appendChild(button);
   }
   const content = document.createElement('strong');
+  if (icon) content.insertAdjacentHTML('afterbegin', iconMarkup(icon));
   const statusValue = localizedText(value);
   content.title = detail ? '' : statusValue;
   const healthyValue = /^(?:正常|Healthy)(?:\s*·\s*(\d+)ms)?$/.exec(statusValue);
@@ -749,9 +656,59 @@ function makeWorkspaceStatus(label, value, tone = '', detail = '', action = null
       track.style.setProperty('--workspace-status-scroll-distance', `${distance}px`);
     });
   } else {
-    content.textContent = statusValue;
+    const statusText = document.createElement('span');
+    statusText.textContent = statusValue;
+    content.appendChild(statusText);
+  }
+  if (action?.retry) {
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'workspace-status-inline-action';
+    retry.textContent = t('common.checkAgain');
+    retry.title = t('common.checkAgain');
+    retry.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      retry.disabled = true;
+      try { await action.retry(); } catch (error) { toast(error?.message || String(error)); } finally { retry.disabled = false; }
+    });
+    content.appendChild(retry);
   }
   item.append(head, content);
+  return item;
+}
+
+function makeWorkspaceCapability(label, value, tone = '', detail = '', icon = '') {
+  const item = document.createElement('div');
+  item.className = `workspace-status-item workspace-capability-item ${tone}`.trim();
+  if (detail) {
+    item.dataset.help = localizedMultiline(detail);
+    item.tabIndex = 0;
+  }
+  const title = document.createElement('span');
+  title.className = 'workspace-capability-title';
+  const titleText = document.createElement('span');
+  titleText.textContent = label;
+  title.appendChild(titleText);
+  const content = document.createElement('strong');
+  if (Array.isArray(icon)) {
+    content.classList.add('workspace-capability-icon-group');
+    for (const entry of icon) {
+      const iconName = typeof entry === 'string' ? entry : entry?.name;
+      if (!iconName) continue;
+      const iconBox = document.createElement('span');
+      iconBox.className = `workspace-capability-icon ${typeof entry === 'object' && entry.tone ? entry.tone : tone}`.trim();
+      iconBox.innerHTML = iconMarkup(iconName);
+      iconBox.title = typeof entry === 'object' && entry.label ? entry.label : value;
+      content.appendChild(iconBox);
+    }
+  } else {
+    if (icon) content.insertAdjacentHTML('afterbegin', iconMarkup(icon));
+    const valueText = document.createElement('span');
+    valueText.textContent = value;
+    content.appendChild(valueText);
+  }
+  content.title = value;
+  item.append(title, content);
   return item;
 }
 
@@ -765,7 +722,6 @@ function profileHasOverrides(profile) {
   if (!profile) return false;
   return profile.runtimePath != null
     || profile.allowedCommands != null
-    || profile.allowCommandExecution != null
     || profile.allowExternalNetwork != null
     || profile.requireHighRiskConfirmation != null
     || profile.highRiskConfirmationMode != null
@@ -811,9 +767,8 @@ function workspaceLocalUrl(service) {
 
 function workspaceSecurityPresentation(service, profile) {
   if (!service?.enabled) return { label: t('security.disabled'), detail: t('security.disabledDetail'), tone: 'muted', labelKey: 'security.disabled' };
-  const commandExecution = profile?.allowCommandExecution == null
-    ? Boolean(runtimeAdmin?.runtime?.allowCommandExecution)
-    : profile.allowCommandExecution === true;
+  const toolTier = ['readonly', 'standard', 'full'].includes(service?.toolTier) ? service.toolTier : 'full';
+  const commandExecution = toolTier === 'full';
   const externalNetwork = profile?.allowExternalNetwork == null
     ? Boolean(runtimeAdmin?.runtime?.allowExternalNetwork)
     : profile.allowExternalNetwork === true;
@@ -821,23 +776,70 @@ function workspaceSecurityPresentation(service, profile) {
     || (profile?.requireHighRiskConfirmation === false ? 'none' : null)
     || runtimeAdmin?.runtime?.highRiskConfirmationMode
     || (runtimeAdmin?.runtime?.requireHighRiskConfirmation === false ? 'none' : 'local');
-  const confirmationMode = rawConfirmationMode === 'none' ? 'none' : 'local';
+  const confirmationMode = rawConfirmationMode === 'none_with_computer_use'
+    ? 'none_with_computer_use'
+    : rawConfirmationMode === 'none' ? 'none' : 'local';
+  const confirmationDisabled = confirmationMode !== 'local';
   const allowedCommands = profile?.allowedCommands || runtimeAdmin?.runtime?.allowedCommands || runtimeAdmin?.defaultAllowedCommands || [];
   const localValue = t(commandExecution ? 'common.allow' : 'security.off');
   const networkValue = t(externalNetwork ? 'common.allow' : 'security.offIsolated');
-  const confirmationValue = t(confirmationMode === 'local' ? 'security.localConfirmation' : 'security.off');
+  const confirmationValue = t(confirmationMode === 'local'
+    ? 'security.localConfirmation'
+    : confirmationMode === 'none_with_computer_use'
+      ? 'security.noConfirmationWithComputerUse'
+      : 'security.off');
   const commandValue = Array.isArray(allowedCommands) ? t('security.commandCount', { count: allowedCommands.length }) : t('workspaceSettings.runtime.inherit');
-  const detail = [
-    t('security.localCommands', { value: localValue }),
+  const detailLines = [
+    t('security.toolRange', { value: workspaceToolTierLabel(toolTier) }),
+    toolTier === 'full'
+      ? t('security.localCommands', { value: localValue })
+      : t('security.commandToolsUnavailable'),
     t('security.externalNetwork', { value: networkValue }),
     t('security.highRiskConfirmation', { value: confirmationValue }),
     t('security.commandAllowlist', { value: commandValue }),
-  ].join(t('security.separator'));
-  if (!commandExecution) return { label: t('security.restricted'), detail, tone: 'good', labelKey: 'security.restricted' };
+  ];
+  const detail = detailLines.join(t('security.separator'));
+  const computerUseEnabled = state?.settings?.computerUseEnabled === true;
+  const computerUseReady = toolTier === 'full' && computerUseEnabled && state?.computerUse?.available === true;
+  const computerUseDetail = !computerUseEnabled
+    ? t('computerUse.disabled')
+    : toolTier !== 'full'
+      ? t('computerUse.developerToolsRequired')
+      : computerUseReady
+        ? t('computerUse.ready')
+        : t('computerUse.permissionsRequired');
+  const toolIcons = [
+    { name: 'notebook-text', tone: 'good', label: t('security.capability.toolReadonly') },
+    { name: 'notebook-pen', tone: toolTier === 'readonly' ? 'muted' : 'good', label: t('security.capability.toolStandard') },
+    { name: 'terminal', tone: toolTier === 'full' ? 'good' : 'muted', label: t('security.capability.toolFull') },
+  ];
+  const capabilities = [
+    { label: t('workspace.permissions.cardTitle'), value: '', tone: 'good', icon: [
+      ...toolIcons,
+      { name: externalNetwork ? 'globe-check' : 'globe-x', tone: externalNetwork ? 'good' : 'warn', label: t('security.externalNetwork', { value: networkValue }) },
+      { name: computerUseReady ? 'square-mouse-pointer' : 'mouse-pointer-2-off', tone: computerUseReady ? 'good' : 'warn', label: computerUseDetail },
+    ], detail: [...detailLines, `${t('security.capability.computerUse')}：${computerUseDetail}`].join('\n') },
+    { label: t('security.capability.highRiskConfirmation'), value: confirmationMode === 'local' ? t('security.capability.localApproval') : confirmationMode === 'none_with_computer_use' ? t('security.capability.noApprovalWithComputerUse') : t('security.capability.noApproval'), tone: confirmationMode === 'local' ? 'good' : 'bad', icon: confirmationMode === 'local' ? 'message-circle-question-mark' : confirmationMode === 'none_with_computer_use' ? 'message-circle-dashed' : 'message-circle-off', detail: t('security.highRiskConfirmation', { value: confirmationValue }) },
+  ];
+  if (toolTier === 'readonly') {
+    return { label: t('security.viewOnly'), detail, tone: 'good', labelKey: 'security.viewOnly', capabilities };
+  }
+  if (toolTier === 'standard') {
+    const label = confirmationDisabled
+      ? t('security.withoutConfirmation', { capability: t('security.edit') })
+      : t('security.edit');
+    return { label, detail, tone: confirmationDisabled ? 'bad' : 'good', capabilities };
+  }
+  if (!commandExecution) {
+    const label = confirmationDisabled
+      ? t('security.withoutConfirmation', { capability: t('security.editCommandsOff') })
+      : t('security.editCommandsOff');
+    return { label, detail, tone: confirmationDisabled ? 'bad' : 'good', labelKey: confirmationDisabled ? null : 'security.editCommandsOff', capabilities };
+  }
   const separator = t('security.separator');
-  if (confirmationMode === 'none') return { label: t('security.highRisk'), detail: `${detail}${separator}${t('security.noConfirmationDetail')}`, tone: 'bad', labelKey: 'security.highRisk' };
-  if (externalNetwork) return { label: t('security.highPrivilege'), detail: `${detail}${separator}${t('security.externalAllowedDetail')}`, tone: 'warn', labelKey: 'security.highPrivilege' };
-  return { label: t('security.controlled'), detail: `${detail}${separator}${t('security.externalBlockedDetail')}`, tone: 'good', labelKey: 'security.controlled' };
+  if (confirmationDisabled) return { label: t('security.withoutConfirmation', { capability: t(externalNetwork ? 'security.executeOnline' : 'security.executeIsolated') }), detail: `${detail}${separator}${t('security.noConfirmationDetail')}`, tone: 'bad', capabilities };
+  if (externalNetwork) return { label: t('security.executeOnline'), detail: `${detail}${separator}${t('security.externalAllowedDetail')}`, tone: 'warn', labelKey: 'security.executeOnline', capabilities };
+  return { label: t('security.executeIsolated'), detail: `${detail}${separator}${t('security.externalBlockedDetail')}`, tone: 'good', labelKey: 'security.executeIsolated', capabilities };
 }
 
 function renderWorkspaceSecuritySummary(service = currentWorkspaceService(), profile = workspaceProfile(editingWorkspaceName || state?.selectedWorkspace || '')) {
@@ -846,8 +848,8 @@ function renderWorkspaceSecuritySummary(service = currentWorkspaceService(), pro
   const box = $('workspaceSecuritySummary');
   if (!label || !detail || !box) return;
   const security = workspaceSecurityPresentation(service, profile);
-  label.textContent = security.labelKey ? t(security.labelKey) : localizedText(security.label);
-  detail.textContent = localizedText(security.detail);
+  label.textContent = security.label;
+  detail.textContent = security.detail;
   box.className = `workspace-security-summary ${security.tone || ''}`.trim();
 }
 
@@ -936,9 +938,6 @@ async function openWorkspaceSettingsModal(workspace) {
   $('currentWorkspaceProfileNameInput').value = profile?.name || `${workspace.name} Runtime`;
   $('currentWorkspaceRuntimePathInput').value = profile?.runtimePath || '';
   $('currentWorkspaceCommandsInput').value = profile?.allowedCommands?.join(',') || '';
-  $('currentWorkspaceExecutionInput').checked = profile?.allowCommandExecution == null
-    ? Boolean(runtimeAdmin?.runtime?.allowCommandExecution)
-    : profile.allowCommandExecution === true;
   $('currentWorkspaceExternalNetworkInput').checked = profile?.allowExternalNetwork == null
     ? Boolean(runtimeAdmin?.runtime?.allowExternalNetwork)
     : profile.allowExternalNetwork === true;
@@ -946,7 +945,9 @@ async function openWorkspaceSettingsModal(workspace) {
     || (profile?.requireHighRiskConfirmation === false ? 'none' : null)
     || runtimeAdmin?.runtime?.highRiskConfirmationMode
     || (runtimeAdmin?.runtime?.requireHighRiskConfirmation === false ? 'none' : 'local');
-  $('currentWorkspaceHighRiskConfirmationModeInput').value = storedConfirmationMode === 'none' ? 'none' : 'local';
+  $('currentWorkspaceHighRiskConfirmationModeInput').value = ['local', 'none', 'none_with_computer_use'].includes(storedConfirmationMode)
+    ? storedConfirmationMode
+    : 'local';
   $('currentWorkspaceDefaultTimeoutInput').value = profile?.defaultCommandTimeoutMs == null ? '' : String(profile.defaultCommandTimeoutMs);
   $('currentWorkspaceMaxTimeoutInput').value = profile?.maxCommandTimeoutMs == null ? '' : String(profile.maxCommandTimeoutMs);
   $('currentWorkspaceMaxOutputInput').value = profile?.maxCommandOutputBytes == null ? '' : String(profile.maxCommandOutputBytes);
@@ -966,7 +967,8 @@ async function openWorkspaceSettingsModal(workspace) {
   if (tokenCopyButton) tokenCopyButton.disabled = !savedToken;
   const tokenResetButton = $('generateWorkspaceTokenButton');
   if (tokenResetButton) tokenResetButton.textContent = localizedText(savedToken ? '重新生成 Bearer Token' : '生成 Bearer Token');
-  $('currentWorkspaceToolTierInput').value = service?.toolTier || 'full';
+  $('currentWorkspaceEditInput').checked = service?.toolTier === 'standard' || service?.toolTier === 'full';
+  $('currentWorkspaceCommandInput').checked = service?.toolTier === 'full';
   renderWorkspaceToolTier();
   updateWorkspacePublicPreview();
   renderWorkspaceSecuritySummary(service, profile);
@@ -1035,6 +1037,7 @@ function updatePublicProviderFields() {
   const clientMode = $('publicClientModeInput').value;
   $('cloudflareProviderFields').classList.toggle('ui-hidden', provider !== 'cloudflare');
   $('tryCloudflareProviderFields').classList.toggle('ui-hidden', provider !== 'trycloudflare');
+  $('cloudflareTransportFields').classList.toggle('ui-hidden', provider !== 'cloudflare' && provider !== 'trycloudflare');
   $('frpProviderFields').classList.toggle('ui-hidden', provider !== 'frp');
   $('publicHostField').classList.toggle('ui-hidden', provider === 'trycloudflare');
   $('publicClientModeField').classList.toggle('ui-hidden', provider === 'external');
@@ -1049,14 +1052,14 @@ function updatePublicProviderFields() {
   const latestVersion = latestManagedClientVersions.get(kind) || '';
   const currentVersion = managed?.installed ? String(managed.version || '') : '';
   const latestMatchesCurrent = Boolean(latestVersion && currentVersion && sameVersion(latestVersion, currentVersion));
-  $('publicClientCurrentVersion').textContent = currentVersion || t('publicClient.notInstalled');
-  $('publicClientLatestVersion').textContent = latestVersion
+  setAutoScrollText($('publicClientCurrentVersion'), currentVersion || t('publicClient.notInstalled'));
+  setAutoScrollText($('publicClientLatestVersion'), latestVersion
     ? latestMatchesCurrent
       ? t('publicClient.upToDate', { version: latestVersion })
       : currentVersion
         ? t('publicClient.updateAvailable', { version: latestVersion })
         : latestVersion
-    : t('publicClient.notQueried');
+    : t('publicClient.notQueried'));
   const versionMode = $('publicClientVersionModeInput').value || 'latest';
   const specificVersion = $('publicClientVersionInput').value.trim();
   $('publicClientSpecificVersionField').classList.toggle('ui-hidden', versionMode !== 'specific');
@@ -1577,21 +1580,24 @@ function nullableNumber(id) {
   return value === '' ? null : Number(value);
 }
 
-function compactLspPath(value) {
-  if (!value) return localizedText('未找到可执行文件');
-  const normalized = value.replace(/^\/Users\/[^/]+\//, '~/').replace(/^[A-Za-z]:\\Users\\[^\\]+\\/, '~\\');
-  if (normalized.length <= 72) return normalized;
-  return `${normalized.slice(0, 18)}…${normalized.slice(-51)}`;
-}
-
 function displayLspPath(item) {
   if (!item.path) return t('lsp.executableNotFound');
-  if (item.strategy === 'npm') {
-    const command = item.path.split(/[\\/]/).pop() || item.command;
-    return t('lsp.managedPath', { command });
-  }
-  return compactLspPath(item.path);
+  return item.command;
 }
+
+function displayLspVersion(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return t('lsp.versionUnknown');
+  const semanticVersion = raw.match(/\bv?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)/);
+  if (semanticVersion) return semanticVersion[1];
+  const dateVersion = raw.match(/\b\d{4}-\d{2}-\d{2}\b/);
+  return dateVersion?.[0] || raw.replace(/^version\s+/i, '').replace(/^v(?=\d)/i, '');
+}
+
+const LSP_LANGUAGE_FALLBACKS = {
+  typescript: 'TS', html: 'HTML', css: 'CSS', python: 'PY', json: '{}', yaml: 'YML', markdown: 'MD', go: 'GO',
+  rust: 'RS', java: 'JV', c: 'C', cpp: 'C++', php: 'PHP', vue: 'VUE', bash: '$', dockerfile: 'DKR',
+};
 
 function renderRuntimeAdmin(snapshot) {
   runtimeAdmin = snapshot;
@@ -1609,17 +1615,26 @@ function renderRuntimeAdmin(snapshot) {
       const row = document.createElement('div');
       row.className = 'lsp-managed-row';
       const label = document.createElement('span');
-      label.textContent = item.label;
+      label.className = 'lsp-managed-label';
+      const languageBadge = document.createElement('span');
+      languageBadge.className = 'lsp-language-icon';
+      const devicon = window.MCPortLanguageIcons?.render(item.id) || '';
+      if (devicon) languageBadge.innerHTML = devicon;
+      else languageBadge.textContent = LSP_LANGUAGE_FALLBACKS[item.id] || String(item.id || '?').slice(0, 3).toUpperCase();
+      const labelText = document.createElement('span');
+      labelText.className = 'lsp-managed-label-text';
+      setAutoScrollText(labelText, item.label);
+      label.append(languageBadge, labelText);
       const pathValue = document.createElement('span');
       pathValue.className = 'lsp-managed-path';
-      const pathText = document.createElement('code');
-      pathText.textContent = displayLspPath(item);
-      pathValue.title = item.path || localizedText('未找到可执行文件');
-      pathValue.append(pathText);
+      setAutoScrollText(pathValue, displayLspPath(item), 'code');
+      const version = document.createElement('span');
+      version.className = 'lsp-managed-version';
+      setAutoScrollText(version, displayLspVersion(item.version));
       const status = document.createElement('span');
       const progress = managedLspProgressByLanguage[item.id] || null;
-      status.textContent = localizedText(progress?.message || (item.installed ? `已安装${item.version ? ` · ${item.version}` : ''}` : '未安装'));
-      status.className = item.installed ? 'good' : '';
+      setAutoScrollText(status, progress?.message || t(item.installed ? 'lsp.installed' : 'lsp.notInstalled'));
+      status.classList.toggle('good', item.installed);
       const busy = progress?.phase === 'checking' || progress?.phase === 'installing';
       const button = document.createElement('button');
       button.className = 'button subtle';
@@ -1632,7 +1647,7 @@ function renderRuntimeAdmin(snapshot) {
       openButton.type = 'button';
       openButton.dataset.openLspLanguage = item.id;
       openButton.textContent = localizedText('打开目录');
-      row.append(label, pathValue, status, button, openButton);
+      row.append(label, pathValue, version, status, button, openButton);
       return row;
     }));
   }
@@ -1745,7 +1760,12 @@ function scheduleAutomaticHealthRefresh(settleMs = 0) {
   const delay = Math.max(0, automaticHealthReadyAt - Date.now());
   automaticHealthTimer = setTimeout(() => {
     automaticHealthTimer = null;
-    if (state?.runtime.phase === 'running' && workspaceListCache.length) void refreshHealthChecks({ quiet: true });
+    if (document.visibilityState === 'visible' && state?.runtime.phase === 'running' && workspaceListCache.length) {
+      automaticHealthDeferred = false;
+      void refreshHealthChecks({ quiet: true });
+    } else if (document.visibilityState !== 'visible') {
+      automaticHealthDeferred = true;
+    }
   }, delay);
 }
 
@@ -1823,6 +1843,10 @@ async function refreshHealthChecks({ quiet = false } = {}) {
     if (!quiet) toast('暂无 Workspace 可检查');
     return;
   }
+  if (quiet && lastHealthCheckedAt && Date.now() - lastHealthCheckedAt < HEALTH_MIN_AUTO_INTERVAL_MS) {
+    scheduleAutomaticHealthRefresh(HEALTH_MIN_AUTO_INTERVAL_MS - (Date.now() - lastHealthCheckedAt));
+    return;
+  }
   healthChecking = true;
   const button = $('refreshHealthButton');
   button.disabled = true;
@@ -1833,6 +1857,7 @@ async function refreshHealthChecks({ quiet = false } = {}) {
   try {
     const results = await window.desktop.checkWorkspaceHealth();
     workspaceHealthCache = new Map(results.map((item) => [item.workspace, item]));
+    lastHealthCheckedAt = Date.now();
     renderWorkspaceManagement(workspaceListCache);
     if (!quiet) {
       const errors = healthErrorCount();
@@ -1997,6 +2022,7 @@ function renderWorkspaceManagement(workspaces) {
     name.textContent = workspace.name;
     const workspacePath = document.createElement('button');
     workspacePath.className = 'workspace-path-button';
+    workspacePath.dataset.icon = 'folder-code';
     workspacePath.textContent = workspace.path;
     workspacePath.title = t('workspace.openFolder', { name: workspace.name });
     workspacePath.setAttribute('aria-label', workspacePath.title);
@@ -2029,9 +2055,11 @@ function renderWorkspaceManagement(workspaces) {
     const publicUrl = workspacePublicUrl(service);
     const health = workspaceHealth(workspace.name);
     const warmingUp = automaticHealthWarmupActive() && !health;
-    const localFallback = state?.runtime.phase === 'running' ? (warmingUp ? '准备中…' : healthChecking ? '检查中…' : '待检查') : '未运行';
-    const publicFallback = warmingUp ? '准备中…' : healthChecking ? '检查中…' : '待检查';
-    const localHealth = serviceEnabled ? probePresentation(health?.local, localFallback) : { label: '已关闭', tone: 'muted' };
+    const localFallback = state?.runtime.phase === 'running'
+      ? t(warmingUp ? 'health.preparing' : healthChecking ? 'health.checking' : 'health.pending')
+      : t('health.notRunning');
+    const publicFallback = t(warmingUp ? 'health.preparing' : healthChecking ? 'health.checking' : 'health.pending');
+    const localHealth = serviceEnabled ? probePresentation(health?.local, localFallback) : { label: t('health.closed'), tone: 'muted' };
     const tryCloudflareStage = state?.settings?.publicAccessProvider === 'trycloudflare' ? state?.tunnel?.readinessStage : null;
     const tryCloudflareStabilizing = Boolean(
       state?.settings?.publicAccessProvider === 'trycloudflare'
@@ -2043,10 +2071,10 @@ function renderWorkspaceManagement(workspaces) {
         ? '公网/OAuth 生效中…'
         : t('tunnel.establishing');
     const publicHealth = !serviceEnabled
-      ? { label: '已关闭', tone: 'muted' }
+      ? { label: t('health.closed'), tone: 'muted' }
       : tryCloudflareStabilizing
         ? { label: tryCloudflareStageLabel, tone: 'muted' }
-        : publicUrl ? probePresentation(health?.public, publicFallback) : { label: '未启用', tone: 'muted' };
+        : publicUrl ? probePresentation(health?.public, publicFallback) : { label: t('health.disabled'), tone: 'muted' };
     const profile = workspaceProfile(workspace.name);
     const security = workspaceSecurityPresentation(service, profile);
     const providerLabel = ({
@@ -2056,45 +2084,36 @@ function renderWorkspaceManagement(workspaces) {
       external: '外部 / 自建',
     })[state?.settings?.publicAccessProvider || 'cloudflare'] || '公网通道';
     const authLabel = serviceEnabled ? (publicUrl ? workspacePublicAuthLabel(service?.publicAuthMode) : '未启用') : '已关闭';
-    const commandExecution = profile?.allowCommandExecution == null
-      ? Boolean(runtimeAdmin?.runtime?.allowCommandExecution)
-      : profile.allowCommandExecution === true;
-    const externalNetwork = profile?.allowExternalNetwork == null
-      ? Boolean(runtimeAdmin?.runtime?.allowExternalNetwork)
-      : profile.allowExternalNetwork === true;
-    const confirmationMode = profile?.highRiskConfirmationMode
-      || (profile?.requireHighRiskConfirmation === false ? 'none' : null)
-      || runtimeAdmin?.runtime?.highRiskConfirmationMode
-      || 'local';
-    const securityDetail = [
-      `等级：${security.label}`,
-      `本机命令：${commandExecution ? '允许' : '关闭'}`,
-      `外部网络：${externalNetwork ? '允许' : '关闭 / 隔离'}`,
-      `高风险确认：${confirmationMode === 'none' ? '关闭' : 'MCPort 本地确认'}`,
-      `详情：${security.detail}`,
-    ].join('\n');
     const publicDetail = [
       t('workspace.publicAddress', { value: publicUrl || t('security.disabled') }),
       `通道：${providerLabel}`,
       `认证：${authLabel}`,
       `状态：${health?.public?.message || publicHealth.label}`,
+      health ? healthLastCheckedText() : '',
       service?.publicAuthMode === 'oauth' ? t('workspace.oauthDetail') : service?.publicAuthMode === 'token' ? t('workspace.tokenDetail') : '',
     ].filter(Boolean).join('\n');
+    const publicNeedsRetry = Boolean(health?.public && !health.public.ok && health.public.status !== 'disabled');
+    const publicAction = publicUrl
+      ? {
+        title: '复制公网 MCP 地址',
+        successMessage: '公网 MCP 地址已复制',
+        run: () => window.desktop.copyWorkspaceEndpoint(workspace.name, 'public'),
+        ...(publicNeedsRetry ? { retry: () => refreshHealthChecks() } : {}),
+      }
+      : publicNeedsRetry ? { retry: () => refreshHealthChecks() } : null;
     if (serviceEnabled && (localHealth.tone === 'bad' || publicHealth.tone === 'bad')) card.classList.add('health-error');
     const statusGrid = document.createElement('div');
     statusGrid.className = 'workspace-status-grid compact';
     statusGrid.append(
-      makeWorkspaceStatus('公网 MCP', publicHealth.label, publicHealth.tone, publicDetail, publicUrl ? {
-        title: '复制公网 MCP 地址',
-        successMessage: '公网 MCP 地址已复制',
-        run: () => window.desktop.copyWorkspaceEndpoint(workspace.name, 'public'),
-      } : null),
-      makeWorkspaceStatus('安全', security.label, security.tone, securityDetail),
+      makeWorkspaceStatus('公网 MCP', publicHealth.label, publicHealth.tone, publicDetail, publicAction, 'workflow'),
     );
+    for (const capability of security.capabilities || []) {
+      statusGrid.append(makeWorkspaceCapability(capability.label, capability.value, capability.tone, capability.detail, capability.icon));
+    }
     hydrateIcons(statusGrid);
     card.append(top, statusGrid);
     const recovery = workspaceRecoveryAdvice(workspace, service, health);
-    if (recovery) card.append(makeWorkspaceRecoveryCard(recovery));
+    if (recovery && !['recovery.publicIssue', 'recovery.publicAuthIssue', 'recovery.publicClientNotRunning'].includes(recovery.titleKey)) card.append(makeWorkspaceRecoveryCard(recovery));
     list.appendChild(card);
 
     if (expanded) {
@@ -2117,6 +2136,11 @@ async function loadWorkspaces() {
   try {
     const workspaces = await window.desktop.listWorkspaces();
     workspaceListCache = workspaces;
+    const workspaceNames = new Set(workspaces.map((workspace) => workspace.name));
+    workspaceHealthCache = new Map(
+      [...workspaceHealthCache].filter(([workspace]) => workspaceNames.has(workspace)),
+    );
+    if (!workspaces.length) lastHealthCheckedAt = 0;
     renderWorkspaceManagement(workspaces);
     renderGlobalStatus();
     if (workspaces.length && state?.runtime.phase === 'running' && !workspaceHealthCache.size) requestHealthRefresh();
@@ -2245,16 +2269,22 @@ function render(next) {
     $('appearanceInput').value = state.settings.appearance || 'system';
     $('debugModeInput').value = state.settings.debugMode || 'off';
     $('lowMemoryTrayInput').checked = state.settings.lowMemoryTray !== false;
+    $('computerUseEnabledInput').checked = state.settings.computerUseEnabled === true;
+    $('computerUsePublicEnabledInput').checked = state.settings.computerUsePublicEnabled === true;
     $('publicAccessProviderInput').value = state.settings.publicAccessProvider || 'cloudflare';
     $('tunnelProxyEnabledInput').checked = state.settings.tunnelProxyEnabled === true;
     $('publicClientModeInput').value = state.settings.publicClientMode || 'managed';
     $('publicClientPathInput').value = state.settings.publicClientPath || '';
     $('publicClientVersionInput').value = state.settings.publicClientVersion || '';
+    $('cloudflareTransportProtocolInput').value = state.settings.cloudflareTransportProtocol || 'auto';
+    $('cloudflareEdgeIpVersionInput').value = state.settings.cloudflareEdgeIpVersion || 'auto';
     $('publicClientVersionModeInput').value = state.settings.publicClientVersion ? 'specific' : 'latest';
     $('tunnelBaseDomainInput').value = state.settings.tunnelBaseDomain || '';
     $('frpServerAddrInput').value = state.settings.frpServerAddr || '';
     $('frpServerPortInput').value = String(state.settings.frpServerPort || 7000);
     $('frpSubdomainInput').value = state.settings.frpSubdomain || 'mcp';
+    $('frpTransportProtocolInput').value = state.settings.frpTransportProtocol || 'tcp';
+    $('frpUseCompressionInput').checked = state.settings.frpUseCompression === true;
     $('startTunnelWithRuntimeInput').checked = state.settings.startTunnelWithRuntime;
     $('launchAtLoginInput').checked = state.settings.launchAtLogin;
     $('minimizeToTrayInput').checked = state.settings.minimizeToTray;
@@ -2265,9 +2295,47 @@ function render(next) {
   $('tokenSavedHint').textContent = localizedText(state.hasApiToken ? '· 已安全保存' : '· 尚未设置');
   $('tunnelTokenSavedHint').textContent = localizedText(state.hasTunnelToken ? '· 已安全保存' : '· 尚未设置');
   $('frpTokenSavedHint').textContent = localizedText(state.hasFrpToken ? '· 已安全保存' : '· 尚未设置');
+  renderComputerUseAvailability();
+  updateComputerUseControls(false);
   updatePublicProviderFields();
   renderGlobalStatus();
   renderLogs();
+}
+
+function renderComputerUseAvailability() {
+  const status = $('computerUseStatus');
+  if (!status || !state) return;
+  const enabled = state.settings.computerUseEnabled === true;
+  const ready = enabled && state.computerUse?.available === true;
+  status.textContent = !enabled
+    ? t('computerUse.disabled')
+    : ready
+      ? t(state.settings.computerUsePublicEnabled ? 'computerUse.readyPublic' : 'computerUse.ready')
+      : state.platform === 'darwin'
+        ? t('computerUse.permissionsRequired')
+        : t('computerUse.unavailable');
+  status.classList.toggle('good', ready);
+  const needsMacPermissions = state.platform === 'darwin' && enabled && !ready;
+  $('openComputerUseSettingsButton')?.classList.toggle('ui-hidden', !needsMacPermissions);
+}
+
+async function refreshComputerUseAvailability() {
+  if (!state?.settings?.computerUseEnabled || state.platform !== 'darwin') return;
+  try {
+    state.computerUse = { ...(state.computerUse || {}), ...(await window.desktop.getComputerUseStatus()) };
+    renderComputerUseAvailability();
+  } catch {
+    // Keep the last known state; the next Desktop state refresh will retry.
+  }
+}
+
+function updateComputerUseControls(clearPublicWhenDisabled = false) {
+  const enabled = Boolean($('computerUseEnabledInput')?.checked);
+  const publicInput = $('computerUsePublicEnabledInput');
+  if (!publicInput) return;
+  if (!enabled && clearPublicWhenDisabled) publicInput.checked = false;
+  publicInput.disabled = !enabled;
+  $('computerUsePublicWarning')?.classList.toggle('ui-hidden', !enabled || !publicInput.checked);
 }
 
 function collectSettings() {
@@ -2283,15 +2351,21 @@ function collectSettings() {
     appearance: $('appearanceInput').value,
     debugMode: $('debugModeInput').value,
     lowMemoryTray: $('lowMemoryTrayInput').checked,
+    computerUseEnabled: $('computerUseEnabledInput').checked,
+    computerUsePublicEnabled: $('computerUsePublicEnabledInput').checked,
     publicAccessProvider: $('publicAccessProviderInput').value,
     tunnelProxyEnabled: $('tunnelProxyEnabledInput').checked,
     publicClientMode: $('publicClientModeInput').value,
     publicClientPath: $('publicClientPathInput').value.trim(),
     publicClientVersion: $('publicClientVersionModeInput').value === 'specific' ? $('publicClientVersionInput').value.trim() : '',
+    cloudflareTransportProtocol: $('cloudflareTransportProtocolInput').value,
+    cloudflareEdgeIpVersion: $('cloudflareEdgeIpVersionInput').value,
     tunnelBaseDomain: $('tunnelBaseDomainInput').value.trim(),
     frpServerAddr: $('frpServerAddrInput').value.trim(),
     frpServerPort: Number($('frpServerPortInput').value),
     frpSubdomain: $('frpSubdomainInput').value.trim(),
+    frpTransportProtocol: $('frpTransportProtocolInput').value,
+    frpUseCompression: $('frpUseCompressionInput').checked,
     startTunnelWithRuntime: $('startTunnelWithRuntimeInput').checked,
     launchAtLogin: $('launchAtLoginInput').checked,
     minimizeToTray: $('minimizeToTrayInput').checked,
@@ -2433,15 +2507,17 @@ $('clearLogsButton').addEventListener('click', async () => {
 $('currentWorkspacePublicAuthModeInput').addEventListener('change', renderWorkspaceAuthFields);
 $('currentWorkspacePublicEnabledInput').addEventListener('change', updateWorkspacePublicPreview);
 $('currentWorkspacePublicPathInput').addEventListener('input', updateWorkspacePublicPreview);
-$('currentWorkspaceToolTierInput').addEventListener('change', renderWorkspaceToolTier);
-for (const id of ['currentWorkspaceExecutionInput', 'currentWorkspaceExternalNetworkInput', 'currentWorkspaceHighRiskConfirmationModeInput']) {
+for (const id of ['currentWorkspaceEditInput', 'currentWorkspaceCommandInput', 'currentWorkspaceExternalNetworkInput', 'currentWorkspaceHighRiskConfirmationModeInput']) {
   $(id).addEventListener('change', () => {
+    if (id === 'currentWorkspaceEditInput' || id === 'currentWorkspaceCommandInput') syncWorkspacePermissionChecks(id);
     const service = currentWorkspaceService();
     const profile = workspaceProfile(editingWorkspaceName || service?.workspace || '') || {};
     const mode = $('currentWorkspaceHighRiskConfirmationModeInput').value;
-    renderWorkspaceSecuritySummary(service, {
+    const selectedTier = $('currentWorkspaceCommandInput').checked
+      ? 'full'
+      : $('currentWorkspaceEditInput').checked ? 'standard' : 'readonly';
+    renderWorkspaceSecuritySummary({ ...service, toolTier: selectedTier }, {
       ...profile,
-      allowCommandExecution: $('currentWorkspaceExecutionInput').checked,
       allowExternalNetwork: $('currentWorkspaceExternalNetworkInput').checked,
       requireHighRiskConfirmation: mode !== 'none',
       highRiskConfirmationMode: mode,
@@ -2653,6 +2729,10 @@ $('tunnelTokenInput').addEventListener('input', setFormDirty);
 $('frpTokenInput').addEventListener('input', setFormDirty);
 $('frpServerAddrInput').addEventListener('input', setFormDirty);
 $('frpServerPortInput').addEventListener('input', setFormDirty);
+$('cloudflareTransportProtocolInput').addEventListener('change', setFormDirty);
+$('cloudflareEdgeIpVersionInput').addEventListener('change', setFormDirty);
+$('frpTransportProtocolInput').addEventListener('change', setFormDirty);
+$('frpUseCompressionInput').addEventListener('change', setFormDirty);
 $('frpSubdomainInput').addEventListener('input', () => {
   setFormDirty();
   $('tunnelGatewayHostname').textContent = currentPublicHost() || '配置公网 Host 后显示';
@@ -2693,6 +2773,22 @@ $('startTunnelWithRuntimeInput').addEventListener('change', setFormDirty);
 $('launchAtLoginInput').addEventListener('change', setFormDirty);
 $('minimizeToTrayInput').addEventListener('change', setFormDirty);
 $('lowMemoryTrayInput').addEventListener('change', setFormDirty);
+$('computerUseEnabledInput')?.addEventListener('change', () => {
+  updateComputerUseControls(true);
+  setFormDirty();
+});
+$('computerUsePublicEnabledInput')?.addEventListener('change', () => {
+  updateComputerUseControls(false);
+  setFormDirty();
+});
+$('openComputerUseSettingsButton')?.addEventListener('click', async () => {
+  try {
+    await window.desktop.openComputerUseSettings();
+    setTimeout(() => void refreshComputerUseAvailability(), 1000);
+  } catch (error) {
+    toast(error?.message || String(error));
+  }
+});
 $('checkAppUpdateButton')?.addEventListener('click', () => { void checkAppUpdate(); });
 $('openAppUpdateButton')?.addEventListener('click', async () => {
   if (!appUpdateResult?.releaseUrl) return;
@@ -2746,7 +2842,7 @@ $('saveCurrentWorkspaceButton').addEventListener('click', async () => {
       publicEnabled,
       publicPath: $('currentWorkspacePublicPathInput').value.trim() || workspaceName,
       publicAuthMode,
-      toolTier: $('currentWorkspaceToolTierInput').value,
+      toolTier: $('currentWorkspaceCommandInput').checked ? 'full' : $('currentWorkspaceEditInput').checked ? 'standard' : 'readonly',
       apiToken: $('currentWorkspaceTokenInput').value.trim(),
     }, {
       name: $('currentWorkspaceProfileNameInput').value.trim() || `${workspaceName} Runtime`,
@@ -2754,7 +2850,6 @@ $('saveCurrentWorkspaceButton').addEventListener('click', async () => {
       allowedCommands: $('currentWorkspaceCommandsInput').value.trim()
         ? $('currentWorkspaceCommandsInput').value.split(',').map((x) => x.trim()).filter(Boolean)
         : null,
-      allowCommandExecution: $('currentWorkspaceExecutionInput').checked,
       allowExternalNetwork: $('currentWorkspaceExternalNetworkInput').checked,
       requireHighRiskConfirmation: $('currentWorkspaceHighRiskConfirmationModeInput').value !== 'none',
       highRiskConfirmationMode: $('currentWorkspaceHighRiskConfirmationModeInput').value,
@@ -2816,7 +2911,6 @@ $('saveSettingsButton').addEventListener('click', async () => {
     const result = await window.desktop.saveAllSettings(collectSettings(), {
       runtimePath,
       allowedCommands: $('runtimeConfigCommandsInput').value.split(',').map((x) => x.trim()).filter(Boolean),
-      allowCommandExecution: runtimeAdmin?.runtime?.allowCommandExecution ?? false,
       allowExternalNetwork: runtimeAdmin?.runtime?.allowExternalNetwork ?? false,
       requireHighRiskConfirmation: runtimeAdmin?.runtime?.requireHighRiskConfirmation ?? true,
       highRiskConfirmationMode: runtimeAdmin?.runtime?.highRiskConfirmationMode === 'none' ? 'none' : 'local',
@@ -2930,10 +3024,34 @@ window.desktop.getState().then((initialState) => {
   void loadRuntimeAdmin().then(() => loadWorkspaces());
   if (!healthTimer) {
     healthTimer = setInterval(() => {
-      if (state?.runtime.phase !== 'running' || !workspaceListCache.length) return;
+      if (document.visibilityState !== 'visible' || state?.runtime.phase !== 'running' || !workspaceListCache.length) return;
       if (automaticHealthWarmupActive()) requestHealthRefresh();
       else void refreshHealthChecks({ quiet: true });
-    }, 30_000);
+    }, HEALTH_REFRESH_INTERVAL_MS);
   }
   window.desktop.markRendererReady();
 }).catch((error) => toast(error?.message || String(error)));
+
+document.addEventListener('visibilitychange', () => {
+  if (
+    document.visibilityState === 'visible'
+    && state?.runtime.phase === 'running'
+    && workspaceListCache.length
+    && (automaticHealthDeferred || !lastHealthCheckedAt || Date.now() - lastHealthCheckedAt >= HEALTH_REFRESH_INTERVAL_MS)
+  ) {
+    automaticHealthDeferred = false;
+    requestHealthRefresh(0);
+  }
+});
+
+window.addEventListener('resize', () => {
+  if (autoScrollResizeTimer) clearTimeout(autoScrollResizeTimer);
+  autoScrollResizeTimer = setTimeout(() => {
+    autoScrollResizeTimer = null;
+    refreshAutoScroll();
+  }, 120);
+});
+
+window.addEventListener('focus', () => {
+  void refreshComputerUseAvailability();
+});

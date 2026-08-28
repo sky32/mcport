@@ -25,7 +25,7 @@ OAuth 授权密钥、OAuth 签名私钥、Bearer Token、Tunnel Token 和 FRP To
 ## 设置分工
 
 - Desktop 设置（JSON）：端口、本地认证、公网通道、代理、语言、主题、托盘/自启
-- Runtime 设置（SQLite `settings` 表）：PATH、允许命令、命令执行开关、外部网络、高风险确认、LSP、超时与大小限额
+- Runtime 设置（SQLite `settings` 表）：PATH、允许命令、外部网络、高风险确认、LSP、超时与大小限额
 - Workspace Runtime Profile（SQLite `workspace_runtime_profiles` 表）：单 Workspace 覆盖项，字段为 null 时继承全局
 
 全局“运行环境”设置页写全局 Runtime 设置；Workspace 高级设置写 Profile。

@@ -159,7 +159,6 @@ function scriptStage(
   if (typeof script !== 'string' || !script.trim() || (name === 'tests' && placeholder.test(script))) {
     return { name, reason: `no ${name === 'tests' ? 'test' : name} script in package.json` };
   }
-  if (!runtime.allowCommandExecution) return { name, reason: 'command execution disabled' };
   if (!runtime.allowedCommands.has(manager)) return { name, reason: `command not allowlisted: ${manager}` };
   return { name, command: manager, args: name === 'tests' ? ['test'] : ['run', name] };
 }
@@ -172,7 +171,6 @@ function pythonStage(
   marker: string,
 ): CommandStagePlan {
   if (!configured) return { name, reason: marker };
-  if (!runtime.allowCommandExecution) return { name, reason: 'command execution disabled' };
   if (!runtime.allowedCommands.has(command)) return { name, reason: `command not allowlisted: ${command}` };
   return { name, command, args: name === 'lint' ? ['check', '.'] : ['.'] };
 }
@@ -631,10 +629,6 @@ export async function runCompletionGate(input: {
         status: input.task.satisfiedCriteria.includes(criterion.id) ? 'pass' : 'fail',
         ...(input.task.satisfiedCriteria.includes(criterion.id) ? {} : { summary: 'manual criterion was not marked satisfied' }),
       });
-      continue;
-    }
-    if (!input.runtime.allowCommandExecution) {
-      checks.push({ criterionId: criterion.id, description: criterion.description, kind: 'command', status: 'fail', summary: 'command execution disabled; criterion cannot be verified' });
       continue;
     }
     if (!criterion.command || !input.runtime.allowedCommands.has(criterion.command)) {

@@ -38,7 +38,7 @@ await chmod(fakeFrpc, 0o755);
 const port = await freePort();
 
 await writeFile(path.join(dataDir, 'desktop-settings.json'), `${JSON.stringify({
-  settingsVersion: 17,
+  settingsVersion: 19,
   workspaceRoot,
   registeredWorkspaces: [],
   selectedWorkspace: '',
@@ -62,6 +62,8 @@ await writeFile(path.join(dataDir, 'desktop-settings.json'), `${JSON.stringify({
   frpServerPort: 7000,
   frpSubdomain: 'w-mcp',
   frpRemotePort: 18443,
+  frpTransportProtocol: 'quic',
+  frpUseCompression: true,
   startTunnelWithRuntime: true,
   launchAtLogin: false,
   minimizeToTray: false,
@@ -105,9 +107,13 @@ try {
     'auth.method = "token"',
     'auth.token = "frp-smoke-token"',
     'transport.tls.enable = true',
+    'transport.protocol = "quic"',
+    'transport.tcpMux = true',
+    'transport.tcpMuxKeepaliveInterval = 30',
     'type = "http"',
     'name = "w-mcp"',
     'subdomain = "w-mcp"',
+    'transport.useCompression = true',
     `localPort = ${port}`,
   ]) {
     if (!config.includes(expected)) throw new Error(`Generated frpc config missing ${expected}:\n${config}`);
@@ -122,6 +128,7 @@ try {
       'frp_provider_generates_runtime_config',
       'frp_provider_uses_safe_config_permissions',
       'frp_provider_passes_expected_http_subdomain_config',
+      'frp_provider_applies_transport_optimization',
     ],
   }, null, 2));
 } finally {

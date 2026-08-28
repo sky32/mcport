@@ -219,9 +219,6 @@ export async function runCommand(
   cwd: string,
   timeoutMs?: number,
 ): Promise<CommandResult> {
-  if (!config.allowCommandExecution) {
-    throw new Error('Command execution is disabled. Enable it only on a trusted local machine.');
-  }
   assertCommandAllowed(command, config.allowedCommands);
   const resolvedCwd = await resolveExistingPath(workspaceRoot, cwd || '.');
   const timeout = Math.min(timeoutMs ?? config.defaultCommandTimeoutMs, config.maxCommandTimeoutMs);
@@ -272,9 +269,6 @@ export class ProcessManager {
     cwd: string,
     timeoutMs?: number,
   ) {
-    if (!config.allowCommandExecution) {
-      throw new Error('Command execution is disabled. Enable it only on a trusted local machine.');
-    }
     assertCommandAllowed(command, config.allowedCommands);
     const resolvedCwd = await resolveExistingPath(workspaceRoot, cwd || '.');
     this.prune();

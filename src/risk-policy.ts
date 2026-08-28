@@ -1,4 +1,4 @@
-export type RiskCategory = 'dependency_change' | 'destructive_command' | 'network_access' | 'file_delete' | 'overwrite' | 'checkpoint_restore' | 'operation_reconcile';
+export type RiskCategory = 'dependency_change' | 'destructive_command' | 'network_access' | 'file_delete' | 'overwrite' | 'checkpoint_restore' | 'operation_reconcile' | 'desktop_control' | 'screen_capture';
 
 export type RiskAssessment = {
   level: 'low' | 'high';

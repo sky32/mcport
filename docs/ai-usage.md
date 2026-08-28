@@ -15,7 +15,7 @@ MCPort 让 AI 客户端直接协助处理本机项目。连接后，客户端可
 
 大范围理解项目时使用 `repo_map`；已知标识符用 `code_search`，递归找文件用 `search_files`，精确文本/正则/glob 范围搜索用 `search_text`。定位到源码符号后优先 `read_symbol`；非代码文件或已知行范围用 `read_file`。直接符号关系用 `find_references`，跨模块依赖拓扑用 `project_graph`，修改共享/公共行为前用 `impact_analysis`，只有需要 diagnostics/hover/definition/精确语义引用时才用 `lsp_query`。
 
-注意代码索引的边界：tree-sitter 符号级智能（repo_map/code_search/read_symbol/find_references/project_graph/impact_analysis）只覆盖 TypeScript/TSX/JavaScript/JSX/MJS/CJS；其他语言使用文件/文本工具和 `lsp_query`（各语言的启用条件见 [LSP 语言服务器说明](lsp.md)）。
+注意代码索引的边界：tree-sitter 符号级智能（repo_map/code_search/read_symbol/find_references/project_graph/impact_analysis）默认覆盖 TypeScript/TSX/JavaScript/JSX/MJS/CJS、Python、Go、Rust、Java、C/C++ 和 PHP；索引状态会按 Workspace 实际文件动态更新。JSON/YAML/Markdown 等格式使用文件/文本工具和 `lsp_query`（各语言的启用条件见 [LSP 语言服务器说明](lsp.md)）。
 
 小范围编辑时，若已经需要读取文件内容，直接复用 `read_file` 返回的 `sha256` 作为 `apply_patch.expectedSha256`，不要为了再次取得哈希额外调用 `stat_file`。只有不需要文件内容、只需要类型/大小/哈希等元数据时才使用 `stat_file`。
 
@@ -32,14 +32,15 @@ MCPort 让 AI 客户端直接协助处理本机项目。连接后，客户端可
 - 检查 Git 差异
 - 执行 quick syntax/LSP 验证
 - 在 full 档执行测试、构建和类型检查
+- 在用户开启 Computer Use 后，通过获准的本地或公网连接查看和操作桌面应用
 
-## 工具权限
+## 工具范围
 
-| 档位 | 能力 |
+| 界面名称 | 内部档位 | 能力 |
 | --- | --- |
-| readonly | 查看项目、搜索代码、代码理解、Git 只读、读取 Checkpoint/项目历史/操作记录（23 个工具） |
-| standard | readonly 加上文件修改/复制/导入、Checkpoint 写入、项目历史写入、任务管理和 quick validation（32 个工具） |
-| full | standard 加上命令会话、操作恢复和 full validation（35 个工具） |
+| 查看工具 | readonly | 查看项目、搜索代码、代码理解、Git 只读、读取 Checkpoint/项目历史/操作记录（23 个工具） |
+| 编辑工具 | standard | readonly 加上文件修改/复制/导入、Checkpoint 写入、项目历史写入、任务管理和 quick validation（32 个工具） |
+| 开发工具 | full | standard 加上命令会话、操作恢复和 full validation（默认 35 个工具；本地启用 Computer Use 后增加 1 个） |
 
 `validate_changes(mode="quick")` 不需要开放命令执行。`validate_changes(mode="full")` 只有 full 档且全局命令执行已开启时才可用；否则工具返回明确的 blocked policy（`full-validation-requires-command-execution`）和可直接执行的 quick `nextAction`。full validation 通过且任务的 manual criteria 已满足时，会直接返回 `completion.ready=true` 与 `task_update(status="completed")` 的下一步。具体命令仍需在允许列表中。
 
@@ -62,6 +63,14 @@ MCPort 让 AI 客户端直接协助处理本机项目。连接后，客户端可
 `operation_read(action=get)` 可以用同一个 `operationId` 查询命令、mutation 或 validation 记录；`action=list`（默认 recovery 视图，隐藏已成功的短命令）用于恢复或继续任务时发现已有工作。
 
 高风险 command、文件覆盖/删除和 checkpoint restore 统一经过 Authority Engine：网络策略拒绝时直接 blocked；需要本地确认时必须等待 Desktop 确认；确认不可用或超时不会继续执行。dry-run 不会弹出确认，因为它不产生写入。
+
+## Computer Use
+
+Computer Use 默认关闭。用户在 Desktop 设置中开启后，本地 `full` 档连接会增加 `computer_use`；如果用户另外允许公网使用，已认证的公网 `full` 档连接也会增加该工具。先用 `status` 检查能力，再用 `screenshot` 获取当前屏幕和坐标范围，随后可以点击、拖动、输入、按键或滚动。截图像素尺寸可能经过缩放，操作坐标必须使用响应里的 `coordinateWidth` / `coordinateHeight`。
+
+当前原生执行层支持 macOS Intel/Apple Silicon，以及 Windows/Linux x64；不支持的架构会在 `status` 和 Desktop 设置中明确显示 unavailable。
+
+除 `status` 外，每次调用默认需要用户在 MCPort Desktop 本地确认；Workspace 选择“完全静默”后可免确认执行，“静默确认”仍会确认 Computer Use。公网暴露不会改变该设置；截图可能包含 Workspace 之外的窗口和敏感内容，客户端不应在没有明确任务需要时调用。
 
 ## Onboarding fingerprint
 

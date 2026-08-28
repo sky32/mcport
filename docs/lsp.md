@@ -6,7 +6,7 @@
 
 | 语言 | 文件扩展名 | 默认服务器 | 内置 |
 | --- | --- | --- | --- |
-| TypeScript / JavaScript | `.ts` `.tsx` `.js` `.jsx` `.mjs` `.cjs` `.mts` `.cts` | `typescript-language-server --stdio` | 按需下载 |
+| TypeScript / JavaScript | `.ts` `.tsx` `.js` `.jsx` `.mjs` `.cjs` `.mts` `.cts` | 托管 TS7：`tsgo --lsp --stdio`；Workspace 兼容模式：`typescript-language-server --stdio` | 按需下载 |
 | HTML | `.html` `.htm` | `vscode-html-language-server --stdio` | 按需下载 |
 | CSS / SCSS / LESS | `.css` `.scss` `.less` | `vscode-css-language-server --stdio` | 按需下载 |
 | Python | `.py` `.pyi` | `pyright-langserver --stdio` | 否 |
@@ -19,6 +19,9 @@
 | C | `.c` `.h` | `clangd --stdio` | 否 |
 | C++ | `.cc` `.cp` `.cpp` `.cxx` `.hpp` `.hh` `.hxx` | `clangd --stdio` | 否 |
 | PHP | `.php` | `intelephense --stdio` | 否 |
+| Vue | `.vue` | `vue-language-server --stdio` | 按需下载 |
+| Bash / Shell | `.sh` `.bash` `.zsh` | `bash-language-server start` | 按需下载 |
+| Dockerfile | `Dockerfile` `Dockerfile.*` | `docker-langserver --stdio` | 按需下载 |
 
 其他扩展名的文件没有配置语言服务器，`lsp_query` 会直接报错。
 
@@ -35,7 +38,7 @@
 1. **配置的绝对路径**（configured-path）：覆盖命令是绝对路径且可执行
 2. **配置的相对路径**（configured-path）：覆盖命令含 `/` 或 `\` 时，相对 Workspace 根解析
 3. **Workspace 本地**（workspace）：`<workspace>/node_modules/.bin/<命令>`
-4. **Desktop 管理的 LSP**（managed）：从设置下载的 TypeScript、HTML、CSS 默认服务器位于用户数据目录，以 embedded-node 方式启动。覆盖命令不是默认命令名时不使用该入口
+4. **Desktop 管理的 LSP**（managed）：TypeScript 优先使用 TS7 原生 `tsgo --lsp --stdio`；存在完整旧版 `tsserver` 时可兼容使用 `typescript-language-server`。HTML/CSS 服务器位于用户数据目录，以 embedded-node 方式启动。覆盖命令不是默认命令名时不使用该入口
 5. **Runtime PATH**（runtime-path）：按 Runtime PATH 逐目录查找
 
 都找不到时该语言不可用。因此 Python、Go、Rust 等语言需要 Workspace 安装了对应服务器（如 devDependencies 里的 pyright）或系统 PATH 中可用。
@@ -77,12 +80,13 @@
 
 ## TypeScript 运行时选择
 
-`typescript-language-server` 还需要一个 `tsserver` 运行时，选择逻辑（`resolveTypeScriptServerOptions`）：
+TypeScript 选择逻辑（`resolveTypeScriptServerOptions`）：
 
 1. Workspace 安装了 `node_modules/typescript` 且主版本 ≤ 6、`tsserver` 健康检查通过（`tsserver.js`、`lib.d.ts`、`lib.es5.d.ts`、`lib.es2015.d.ts`、`lib.esnext.d.ts` 五个文件齐全）→ 使用 Workspace 版本（workspace-compatible）
-2. 否则使用 Desktop 管理的 TypeScript 运行时；Workspace 版本 > 6 时记录为 managed
+2. 否则使用 Desktop 管理的 TS7 原生 LSP（`tsgo --lsp --stdio`）
+3. 没有 TS7 原生 LSP 时，才回退检查 Desktop 管理的旧版 `tsserver` 运行时
 
-管理运行时未安装或文件缺失时 TypeScript 整体不可用，并明确列出缺失文件——在 Desktop 设置中重新安装可恢复。
+管理运行时未安装或文件缺失时 TypeScript 整体不可用，并明确提示安装 TS7 原生 LSP——在 Desktop 设置中重新安装可恢复。
 
 ## 会话与网络隔离
 
@@ -102,7 +106,7 @@
 
 - `lsp_query` 对不可用语言返回明确错误，不会伪造语义结果；错误信息会提示从 Desktop 设置安装受管理服务器，或配置显式命令
 - `check_exec_environment` 与 `server_info` 返回每语言的 `available`、`source`（解析来源）、`launchMode`、`unavailableReason` 与 TypeScript 运行时选择详情（结果缓存 30 秒）
-- 语言服务器不可用不影响 tree-sitter 代码索引：`repo_map`、`code_search`、`read_symbol`、`find_references` 仍可用于 TS/JS（见 [tools.md](tools.md)）
+- 语言服务器不可用不影响 tree-sitter 代码索引：`repo_map`、`code_search`、`read_symbol`、`find_references` 仍可用于已支持的代码语言（包括 TS/JS、Python、Go、Rust、Java、C/C++ 和 PHP；见 [tools.md](tools.md)）
 
 ## 与 quick validation 的关系
 

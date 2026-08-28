@@ -93,6 +93,8 @@ await writeFile(path.join(dataDir, 'desktop-settings.json'), `${JSON.stringify({
   publicClientMode: 'custom',
   publicClientPath: fakeCloudflared,
   publicClientVersion: '',
+  cloudflareTransportProtocol: 'http2',
+  cloudflareEdgeIpVersion: '4',
   tunnelBaseDomain: '',
   frpServerAddr: '',
   frpServerPort: 7000,
@@ -139,7 +141,7 @@ try {
   const markerDeadline = Date.now() + 2_000;
   while (Date.now() < markerDeadline && !(await stat(marker).catch(() => null))) await new Promise((resolve) => setTimeout(resolve, 50));
   const args = await readFile(marker, 'utf8');
-  if (!args.includes(`tunnel --url http://127.0.0.1:${gatewayPort}`)) {
+  if (!args.includes(`tunnel --protocol http2 --edge-ip-version 4 --url http://127.0.0.1:${gatewayPort}`)) {
     throw new Error(`cloudflared did not receive Quick Tunnel args: ${args}`);
   }
   const attempts = Number((await readFile(attemptFile, 'utf8')).trim());
@@ -171,6 +173,7 @@ try {
     checks: [
       'trycloudflare_requires_no_domain_or_token',
       'trycloudflare_uses_official_quick_tunnel_args',
+      'trycloudflare_applies_transport_preferences',
       'trycloudflare_transient_network_failure_fast_retries',
       'trycloudflare_parses_ephemeral_public_url',
       'trycloudflare_waits_for_runtime_oauth_readiness_grace',

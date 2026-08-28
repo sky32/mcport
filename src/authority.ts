@@ -3,7 +3,7 @@ import { requestLocalConfirmation } from './local-confirmations.js';
 
 export type AuthorityRuntime = {
   allowExternalNetwork: boolean;
-  highRiskConfirmationMode: 'local' | 'none';
+  highRiskConfirmationMode: 'local' | 'none' | 'none_with_computer_use';
   requireHighRiskConfirmation: boolean;
 };
 
@@ -17,7 +17,9 @@ export type AuthorityDecision = {
 };
 
 function confirmationMode(runtime: AuthorityRuntime): 'local' | 'none' {
-  return runtime.highRiskConfirmationMode === 'none' || !runtime.requireHighRiskConfirmation ? 'none' : 'local';
+  return (runtime.highRiskConfirmationMode === 'none'
+    || runtime.highRiskConfirmationMode === 'none_with_computer_use'
+    || runtime.requireHighRiskConfirmation === false) ? 'none' : 'local';
 }
 
 export async function authorizeOperation(input: {

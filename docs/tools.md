@@ -1,6 +1,6 @@
 # MCP 工具目录
 
-MCPort 共注册 35 个工具，按 Workspace 的权限档位（tier）条件注册：`readonly` 暴露 23 个，`standard` 暴露 32 个，`full` 暴露 35 个。实际可用工具始终以当前连接返回的 `tools/list` 为准；需要确认能力时可调用 `server_info`。
+MCPort 默认注册 35 个工具，按 Workspace 的工具范围（tier）条件注册：界面中的“查看工具”对应 `readonly`（23 个），“编辑工具”对应 `standard`（32 个），“开发工具”对应 `full`（35 个）。开启 Computer Use 后，允许使用它的“开发工具”连接增加 1 个工具。实际可用工具始终以当前连接返回的 `tools/list` 为准；需要确认能力时可调用 `server_info`。
 
 当端点只暴露一个 Workspace 时（单 Workspace 服务、公网 Gateway 路由），工具 schema 不含 `workspace` 参数；多 Workspace 端点必须显式传入。
 
@@ -43,7 +43,7 @@ MCPort 共注册 35 个工具，按 Workspace 的权限档位（tier）条件注
 | project_graph | readonly | 跨模块/文件/符号依赖拓扑（`level=module\|file\|symbol`，仅解析相对 import） |
 | lsp_query | readonly | LSP 查询：`operation=diagnostics\|hover\|definition\|source_definition\|references\|document_symbols` |
 
-前六个工具基于 tree-sitter 代码索引，当前只索引 TypeScript/TSX/JavaScript/JSX/MJS/CJS 文件；其他语言没有符号级结果。`lsp_query` 覆盖 13 种语言，服务器启用与解析逻辑见 [LSP 语言服务器说明](lsp.md)：TypeScript/HTML/CSS 服务器从 Desktop 设置按需下载，其余按“配置路径 → Workspace `node_modules/.bin` → Desktop 管理目录 → Runtime PATH”顺序解析，未安装时明确报告 unavailable，不会伪造语义结果。`source_definition` 仅 TypeScript 支持。
+前六个工具基于 tree-sitter 代码索引，默认索引 TypeScript/TSX/JavaScript/JSX/MJS/CJS、Python、Go、Rust、Java、C/C++ 和 PHP 文件；索引语言会按 Workspace 实际文件动态出现。JSON/YAML/Markdown/Dockerfile/Shell 等格式仍使用文件/文本工具。`lsp_query` 覆盖 16 种语言，服务器启用与解析逻辑见 [LSP 语言服务器说明](lsp.md)：服务器从 Desktop 设置按需下载，其余按“配置路径 → Workspace `node_modules/.bin` → Desktop 管理目录 → Runtime PATH”顺序解析，未安装时明确报告 unavailable，不会伪造语义结果。`source_definition` 仅 TypeScript 支持。
 
 ## Git（严格只读）
 
@@ -93,7 +93,7 @@ Checkpoint 快照保存在 MCPort 外部 Runtime State（按 Workspace 路径哈
 
 验收条件分两类：manual criterion 由模型用 `satisfyCriterionIds` 满足；command criterion 由 completion gate 重跑命令验证（返回 `verified/failed` 和 `lastVerification`）。
 
-`validate_changes(mode="quick")` 不需要命令执行权限。`mode="full"` 只有 full 档且全局命令执行已开启时可用；否则返回 `full-validation-requires-command-execution` blocked policy 和可直接执行的 quick `nextAction`。full 模式的命令 stage：Node 项目按 `packageManager` 选择 npm/pnpm/yarn/bun 运行 `typecheck`/`lint`/`build`/`test` 脚本；Python 项目按 pyproject 配置运行 mypy/ruff/pytest。每个 stage 限时 `min(maxTimeout, 180s)`。
+`validate_changes(mode="quick")` 不需要开发工具范围。`mode="full"` 只有 full 档可用；否则返回 `full-validation-requires-command-execution` blocked policy 和可直接执行的 quick `nextAction`。full 模式的命令 stage：Node 项目按 `packageManager` 选择 npm/pnpm/yarn/bun 运行 `typecheck`/`lint`/`build`/`test` 脚本；Python 项目按 pyproject 配置运行 mypy/ruff/pytest。每个 stage 限时 `min(maxTimeout, 180s)`。
 
 变更按三层分类：`expectedTaskChanges`（命中 `expectedPaths` 前缀）、`knownExternalChanges`（命中任务基线变更集或已确认路径）、`unexpectedChanges`（其余）。默认 `detail=summary` 只返回计数；`includeWorkspaceFiles=true` 才展开 Workspace 级文件名。
 
@@ -110,6 +110,14 @@ Completion gate 有四个守卫：验收条件全部通过、最近一次验证 
 命令必须在允许列表中（精确命令名，默认 46 个），受超时（默认 30s/上限 600s）、输出上限（256KiB）和并发会话上限（100）约束。`sessionId` 与 `operationId` 指向同一执行身份，分别显式返回。
 
 Runtime 重启后，原先 `queued/running` 的操作会变为 `outcome_unknown`：不能直接重试或当作失败。`reobserve` 记录当前可见状态（PID 存在不会被判为成功）；核对 Workspace、日志等外部证据后，才能用带理由的 `reconcile` 裁决。`reconcile` 属高风险操作，需要 Desktop 本地确认。
+
+## Computer Use（full 档，可选）
+
+| 工具 | tier | 用途 |
+| --- | --- | --- |
+| computer_use | full | `status` 检查桌面能力，`screenshot` 获取屏幕，或执行 `move` / `click` / `drag` / `type` / `key` / `scroll` |
+
+Computer Use 默认关闭，开启后默认只在本地 MCP 服务注册。用户还可以单独允许公网使用；此时只有已认证且工具范围为“开发工具”（`full`）的 `/w/<workspace>/mcp` 路由会暴露。它不依赖本机命令开关；除 `status` 外，每次调用默认等待 Desktop 本地确认。Workspace 选择“完全静默”后可免确认；“静默确认”仍会确认 Computer Use。鼠标坐标使用截图响应中的 `coordinateWidth` / `coordinateHeight`，不能直接使用缩放后图片的像素尺寸。
 
 ## 高风险操作与本地确认
 

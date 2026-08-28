@@ -7,6 +7,7 @@ import { DesktopRuntimeStore } from '../dist-desktop/runtime-store.js';
 import { DEFAULT_ALLOWED_COMMANDS, PREVIOUS_DEFAULT_ALLOWED_COMMANDS } from '../shared/runtime-repository.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const preferredGatewayPort = 47877;
 const runId = `${process.pid}-${Date.now()}`;
 const dataDir = path.join(root, 'data', `desktop-smoke-user-data-${runId}`);
 const workspaceRoot = path.join(root, 'workspaces', `desktop-app-smoke-${runId}`);
@@ -20,6 +21,17 @@ async function freePort() {
       const port = typeof address === 'object' && address ? address.port : 0;
       server.close(() => resolve(port));
     });
+  });
+}
+
+async function guardPreferredGatewayPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', (error) => {
+      if (error?.code === 'EADDRINUSE') resolve(null);
+      else reject(error);
+    });
+    server.listen(preferredGatewayPort, '127.0.0.1', () => resolve(server));
   });
 }
 
@@ -46,11 +58,12 @@ async function waitForHealth(port, expectedUp, timeoutMs = 12_000, child = null)
 await rm(dataDir, { recursive: true, force: true });
 await rm(workspaceRoot, { recursive: true, force: true });
 await mkdir(dataDir, { recursive: true });
+const preferredGatewayPortGuard = await guardPreferredGatewayPort();
 const port = await freePort();
 await writeFile(
   path.join(dataDir, 'desktop-settings.json'),
   `${JSON.stringify({
-    settingsVersion: 15,
+    settingsVersion: 19,
     workspaceRoot,
     registeredWorkspaces: [],
     selectedWorkspace: '',
@@ -153,6 +166,10 @@ try {
   ].filter(Boolean).join('\n');
   throw new Error(detail);
 } finally {
+  await new Promise((resolve) => {
+    if (!preferredGatewayPortGuard) return resolve();
+    preferredGatewayPortGuard.close(resolve);
+  });
   await rm(dataDir, { recursive: true, force: true });
   await rm(workspaceRoot, { recursive: true, force: true });
 }

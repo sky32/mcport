@@ -9,7 +9,7 @@ import Parser from 'web-tree-sitter';
 import { DEFAULT_FILE_IGNORES } from './file-tools.js';
 import { resolveExistingPath } from './security.js';
 
-type LanguageName = 'typescript' | 'tsx' | 'javascript';
+type LanguageName = 'typescript' | 'tsx' | 'javascript' | 'python' | 'go' | 'rust' | 'java' | 'c' | 'cpp' | 'php';
 
 type IndexedSymbol = {
   path: string;
@@ -41,7 +41,11 @@ type WorkspaceIndexStatus = {
   error: string | null;
 };
 
-const CODE_PATTERNS = ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.cjs'];
+const CODE_PATTERNS = [
+  '**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.cjs',
+  '**/*.py', '**/*.pyi', '**/*.go', '**/*.rs', '**/*.java', '**/*.c', '**/*.h',
+  '**/*.cc', '**/*.cpp', '**/*.cxx', '**/*.hpp', '**/*.hh', '**/*.hxx', '**/*.php',
+];
 const require = createRequire(import.meta.url);
 const grammarRoot = path.join(path.dirname(require.resolve('tree-sitter-wasms/package.json')), 'out');
 let parserInit: Promise<void> | null = null;
@@ -55,13 +59,30 @@ function languageForPath(filePath: string): LanguageName | null {
   if (ext === '.ts') return 'typescript';
   if (ext === '.tsx') return 'tsx';
   if (['.js', '.jsx', '.mjs', '.cjs'].includes(ext)) return 'javascript';
+  if (['.py', '.pyi'].includes(ext)) return 'python';
+  if (ext === '.go') return 'go';
+  if (ext === '.rs') return 'rust';
+  if (ext === '.java') return 'java';
+  if (ext === '.c' || ext === '.h') return 'c';
+  if (['.cc', '.cpp', '.cxx', '.hpp', '.hh', '.hxx'].includes(ext)) return 'cpp';
+  if (ext === '.php') return 'php';
   return null;
 }
 
 function grammarFile(language: LanguageName): string {
-  if (language === 'typescript') return 'tree-sitter-typescript.wasm';
-  if (language === 'tsx') return 'tree-sitter-tsx.wasm';
-  return 'tree-sitter-javascript.wasm';
+  const files: Record<LanguageName, string> = {
+    typescript: 'tree-sitter-typescript.wasm',
+    tsx: 'tree-sitter-tsx.wasm',
+    javascript: 'tree-sitter-javascript.wasm',
+    python: 'tree-sitter-python.wasm',
+    go: 'tree-sitter-go.wasm',
+    rust: 'tree-sitter-rust.wasm',
+    java: 'tree-sitter-java.wasm',
+    c: 'tree-sitter-c.wasm',
+    cpp: 'tree-sitter-cpp.wasm',
+    php: 'tree-sitter-php.wasm',
+  };
+  return files[language];
 }
 
 function compactText(value: string, max = 320): string {
@@ -79,11 +100,22 @@ function signatureFor(node: Parser.SyntaxNode): string {
 function symbolKind(node: Parser.SyntaxNode): string | null {
   switch (node.type) {
     case 'class_declaration': return 'class';
+    case 'class_definition':
+    case 'class_specifier': return 'class';
     case 'function_declaration': return 'function';
+    case 'function_definition':
+    case 'function_item':
+    case 'function_declaration_statement': return 'function';
     case 'method_definition': return 'method';
+    case 'method_declaration': return 'method';
     case 'interface_declaration': return 'interface';
+    case 'trait_declaration': return 'trait';
     case 'type_alias_declaration': return 'type';
     case 'enum_declaration': return 'enum';
+    case 'struct_item':
+    case 'struct_specifier': return 'struct';
+    case 'const_item':
+    case 'const_declaration': return 'constant';
     case 'variable_declarator': {
       const value = node.childForFieldName('value');
       return value && ['arrow_function', 'function'].includes(value.type) ? 'function' : 'variable';
@@ -613,11 +645,37 @@ export class CodeIndexManager {
           continue;
         }
         const source = sourceBuffer.toString('utf8');
-        const parser = await this.parsers.createParser(language);
-        const tree = parser.parse(source);
-        const parsed = parseTree(relative, source, tree);
-        tree.delete();
-        parser.delete();
+        let parsed: ParsedFile | null = null;
+        try {
+          const parser = await this.parsers.createParser(language);
+          try {
+            const tree = parser.parse(source);
+            parsed = parseTree(relative, source, tree);
+            tree.delete();
+          } finally {
+            parser.delete();
+          }
+        } catch {
+          // A grammar/runtime failure in one file must not invalidate the
+          // entire Workspace index. Keep the file in code_files, remove any
+          // stale symbols, and continue indexing the remaining files.
+          this.db.exec('BEGIN IMMEDIATE');
+          try {
+            for (const table of ['code_symbols', 'code_references', 'code_imports', 'code_calls']) {
+              this.db.prepare(`DELETE FROM ${table} WHERE workspace = ? AND path = ?`).run(workspaceRoot, relative);
+            }
+            this.db.prepare(`
+              INSERT INTO code_files(workspace,path,size,mtime_ms,sha256,language,indexed_at)
+              VALUES (?,?,?,?,?,?,?)
+              ON CONFLICT(workspace,path) DO UPDATE SET size=excluded.size,mtime_ms=excluded.mtime_ms,sha256=excluded.sha256,language=excluded.language,indexed_at=excluded.indexed_at
+            `).run(workspaceRoot, relative, info.size, info.mtimeMs, digest, language, started);
+            this.db.exec('COMMIT');
+          } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+          }
+          continue;
+        }
 
         this.db.exec('BEGIN IMMEDIATE');
         try {

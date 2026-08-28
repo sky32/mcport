@@ -3,6 +3,8 @@ import { createServer } from 'node:net';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { once } from 'node:events';
+import { request as httpRequest } from 'node:http';
+import { Readable } from 'node:stream';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
 async function freePort(): Promise<number> {
@@ -29,9 +31,37 @@ async function waitForHealth(port: number): Promise<void> {
   throw new Error(`Service ${port} did not become healthy`);
 }
 
-async function inspect(port: number) {
+async function inspect(port: number, options: { url?: string; token?: string; hostHeader?: string } = {}) {
   const client = new Client({ name: 'tool-tier-smoke', version: '0.1.0' });
-  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`));
+  const transport = new StreamableHTTPClientTransport(new URL(options.url || `http://127.0.0.1:${port}/mcp`), {
+    ...(options.token ? { requestInit: { headers: { Authorization: `Bearer ${options.token}` } } } : {}),
+    ...(options.hostHeader ? {
+      fetch: async (input: string | URL | Request, init?: RequestInit) => {
+        const target = new URL(input instanceof URL ? input.href : typeof input === 'string' ? input : input.url);
+        const headers = new Headers(init?.headers);
+        headers.set('host', options.hostHeader!);
+        return new Promise<Response>((resolve, reject) => {
+          const request = httpRequest({
+            hostname: '127.0.0.1',
+            port: target.port,
+            path: `${target.pathname}${target.search}`,
+            method: init?.method || 'GET',
+            headers: Object.fromEntries(headers.entries()),
+            signal: init?.signal ?? undefined,
+          }, (response) => {
+            resolve(new Response(Readable.toWeb(response) as ReadableStream, {
+              status: response.statusCode || 500,
+              statusText: response.statusMessage,
+              headers: response.headers as HeadersInit,
+            }));
+          });
+          request.once('error', reject);
+          if (typeof init?.body === 'string' || init?.body instanceof Uint8Array) request.write(init.body);
+          request.end();
+        });
+      },
+    } : {}),
+  });
   try {
     await client.connect(transport);
     const listed = await client.listTools();
@@ -73,7 +103,7 @@ const writeNames = [
   'project_history_write',
   'task_create', 'task_update', 'validate_changes', 'change_apply_and_validate',
 ];
-const executeNames = ['exec_command', 'session_control', 'operation_recovery'];
+const executeNames = ['exec_command', 'session_control', 'operation_recovery', 'computer_use'];
 const removedWorkspaceNames = ['workspace_list', 'workspace_info', 'workspace_create'];
 
 const fullPort = await freePort();
@@ -100,6 +130,8 @@ const child = spawn(process.execPath, ['dist/server.js'], {
     STATE_DB_PATH: path.join(root, 'state.db'),
     MCP_TRACE_MODE: 'detailed',
     MCP_TRACE_FILE: traceFile,
+    COMPUTER_USE_ENABLED: 'true',
+    COMPUTER_USE_PUBLIC_ENABLED: 'true',
     MCP_ADDITIONAL_SERVICES_JSON: JSON.stringify([
       {
         id: 'readonly', name: 'readonly', host: '127.0.0.1', port: readonlyPort,
@@ -114,6 +146,11 @@ const child = spawn(process.execPath, ['dist/server.js'], {
         path: '/mcp', workspaces: ['workspace-a'], toolTier: 'full',
       },
     ]),
+    MCP_ALLOWED_HOSTS: ['127.0.0.1', 'localhost', 'localtest.me', ...[fullPort, readonlyPort, standardPort, corePort].flatMap((port) => [`127.0.0.1:${port}`, `localhost:${port}`]), `localtest.me:${fullPort}`].join(','),
+    MCP_GATEWAY_WORKSPACE_AUTH_JSON: JSON.stringify({
+      'workspace-a': { mode: 'token', token: 'computer-use-public-smoke-token', workspace: 'workspace-a' },
+    }),
+    MCP_WORKSPACE_TOOL_TIERS_JSON: JSON.stringify({ 'workspace-a': 'full' }),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -124,15 +161,25 @@ let full: Awaited<ReturnType<typeof inspect>> | null = null;
 let readonly: Awaited<ReturnType<typeof inspect>> | null = null;
 let standard: Awaited<ReturnType<typeof inspect>> | null = null;
 let core: Awaited<ReturnType<typeof inspect>> | null = null;
+let publicGateway: Awaited<ReturnType<typeof inspect>> | null = null;
 
 try {
   await Promise.all([waitForHealth(fullPort), waitForHealth(readonlyPort), waitForHealth(standardPort), waitForHealth(corePort)]);
-  [full, readonly, standard, core] = await Promise.all([inspect(fullPort), inspect(readonlyPort), inspect(standardPort), inspect(corePort)]);
+  [full, readonly, standard, core, publicGateway] = await Promise.all([
+    inspect(fullPort),
+    inspect(readonlyPort),
+    inspect(standardPort),
+    inspect(corePort),
+    inspect(fullPort, { url: `http://localtest.me:${fullPort}/w/workspace-a/mcp`, hostHeader: `localtest.me:${fullPort}`, token: 'computer-use-public-smoke-token' }),
+  ]);
 
   if (full.tier !== 'full' || readonly.tier !== 'readonly' || standard.tier !== 'standard' || core.tier !== 'full') {
     throw new Error(`server_info tool tier mismatch: ${full.tier}/${readonly.tier}/${standard.tier}/${core.tier}`);
   }
   if (core.tools.size !== full.tools.size) throw new Error(`Tool tier exposure mismatch: ${core.tools.size}/${full.tools.size}`);
+  if (!publicGateway.tools.has('computer_use') || publicGateway.tools.size !== full.tools.size) {
+    throw new Error(`Public Gateway must expose explicitly enabled Computer Use: ${publicGateway.tools.size}/${full.tools.size}`);
+  }
 
   expectHas(readonly.tools, readonlyNames, 'readonly');
   expectMissing(readonly.tools, [...writeNames, ...executeNames, ...removedWorkspaceNames], 'readonly');
@@ -280,6 +327,7 @@ try {
       'readonly_tool_surface',
       'standard_tool_surface',
       'full_tool_surface',
+      'computer_use_public_opt_in',
       'server_info_tool_tier',
       'readonly_annotations',
       'write_annotations',
@@ -300,7 +348,7 @@ try {
     ],
   }, null, 2));
 } finally {
-  for (const inspected of [full, readonly, standard, core]) {
+  for (const inspected of [full, readonly, standard, core, publicGateway]) {
     if (!inspected) continue;
     try { await inspected.transport.terminateSession(); } catch {}
     try { await inspected.client.close(); } catch {}

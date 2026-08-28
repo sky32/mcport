@@ -23,7 +23,7 @@ Desktop 界面有四个页面：项目空间、设置、日志和调试。调试
 
 - **MCP 校验与公网**：本地端点状态与重新校验；启用公网 MCP 开关
 - **认证**：OAuth 模式下复制 MCP 地址/授权密钥，可重新生成授权密钥或撤销全部授权；Token 模式下复制 MCP 地址/Bearer Token，可重新生成或手动设置自定义 Token；折叠区显示协议细节（Issuer、Scope、客户端注册方式、Token 算法与 Refresh 轮换）
-- **高级设置**：公网路径与认证方式选择；工具权限档位（readonly/standard/full）与安全状态摘要；运行环境覆盖（允许本机命令、允许外部网络、高风险确认方式 local/none、PATH、命令白名单、默认/最大超时、最大输出）
+- **高级设置**：公网路径与认证方式选择；向 AI 提供的工具范围（查看/编辑/开发）与当前实际能力；操作限制（允许本机命令、允许外部网络、高风险确认方式、PATH、命令白名单、默认/最大超时、最大输出）
 
 连接检查只负责报告当前可达性，不代替 OAuth 授权或工具权限验证。
 
@@ -58,6 +58,8 @@ Desktop 界面有四个页面：项目空间、设置、日志和调试。调试
 - **TryCloudflare**：无需账号、域名和 Tunnel Token，启动后从 `cloudflared` 输出提取随机 `*.trycloudflare.com` 地址并重载 Runtime。该模式使用 JSON-only 公网 Gateway（不支持 SSE）。
 - **FRP Client**：Desktop 生成 `frpc` 配置（token 加密存储，TLS 强制开启），通过 subdomain 映射到本机网关。
 - **外部自建**：不启动任何进程，由用户自行维护公网转发。
+
+Cloudflare 与 TryCloudflare 可选择 `auto`/QUIC/HTTP/2 传输协议及 Edge IP 版本；默认使用自动协议和双栈回退。FRP 可选择 TCP/QUIC/KCP，并可按需开启代理内容压缩；QUIC/KCP 要求 `frps` 开放匹配的 UDP 端口。FRP 默认保留 TCP multiplexing、30 秒 keepalive 与 TLS，连接池不因普通 MCP 流量自动扩大。
 
 `cloudflared` 和 `frpc` 的托管安装从 GitHub Releases 下载，强制校验 SHA256（Release 未提供 digest 时拒绝安装），支持版本固定、回滚；安装目录在用户数据目录的 `managed-tools/` 下。Tunnel 客户端不会自动获得 Runtime 的命令权限。
 

@@ -26,6 +26,8 @@ OAuth 私钥、Bearer Token、Tunnel Token 和 FRP Token 使用 Electron `safeSt
 
 Workspace 内容只有在用户连接的 MCP 客户端调用相应工具、或用户主动开启公网访问时才会被读取或传输。公网 Workspace 必须启用 OAuth 或 Bearer Token；用户应只暴露信任的目录和工具档位。
 
+Computer Use 默认关闭且默认不在公网路由暴露。用户可以通过独立开关允许已认证的公网 `full` 档客户端调用。用户逐次批准的屏幕截图会返回给发起调用的 MCP 客户端，因此可能包含 Workspace 之外的窗口、通知或凭据；使用前应关闭无关敏感窗口。MCPort 不在后台保存这些截图。
+
 ## 变更
 
 隐私行为发生实质变化时，会在 CHANGELOG 和 Release Notes 中说明。问题或疑虑请通过仓库的 Issue（非敏感问题）或 Security Advisory（敏感问题）反馈。

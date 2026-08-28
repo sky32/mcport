@@ -265,8 +265,12 @@ export function loadConfig() {
     allowCommandExecution: boolEnv('ALLOW_COMMAND_EXECUTION', false),
     allowExternalNetwork: boolEnv('ALLOW_EXTERNAL_NETWORK', false),
     requireHighRiskConfirmation: boolEnv('REQUIRE_HIGH_RISK_CONFIRMATION', true),
-    highRiskConfirmationMode: (process.env.HIGH_RISK_CONFIRMATION_MODE?.trim().toLowerCase() === 'none' || !boolEnv('REQUIRE_HIGH_RISK_CONFIRMATION', true) ? 'none' : 'local') as 'local' | 'none',
+    highRiskConfirmationMode: (process.env.HIGH_RISK_CONFIRMATION_MODE?.trim().toLowerCase() === 'none_with_computer_use'
+      ? 'none_with_computer_use'
+      : process.env.HIGH_RISK_CONFIRMATION_MODE?.trim().toLowerCase() === 'none' || !boolEnv('REQUIRE_HIGH_RISK_CONFIRMATION', true) ? 'none' : 'local') as 'local' | 'none' | 'none_with_computer_use',
     networkIsolationRequired: boolEnv('NETWORK_ISOLATION_REQUIRED', true),
+    computerUseEnabled: boolEnv('COMPUTER_USE_ENABLED', false),
+    computerUsePublicEnabled: boolEnv('COMPUTER_USE_PUBLIC_ENABLED', false),
     lspEnabled: boolEnv('LSP_ENABLED', true),
     lspRequestTimeoutMs: intEnv('LSP_REQUEST_TIMEOUT_MS', 8_000),
     lspTypeScriptCommand: process.env.LSP_TYPESCRIPT_COMMAND?.trim() || 'typescript-language-server',

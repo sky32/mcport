@@ -26,6 +26,7 @@ Project files, runtime state, and credentials stay on your machine by default. Y
 - Controlled command execution with allowlists, timeouts, output limits, and local confirmation
 - Local or public MCP access for one or more Workspaces
 - Per-language LSP installation and updates, with custom server support
+- Optional Computer Use with screen, mouse, and keyboard control gated by per-action approval
 
 ## Connect an AI client
 
@@ -57,7 +58,7 @@ https://mcp.example.com/w/<workspace>/mcp
 
 ## Files, code, and LSP
 
-File operations remain inside the selected Workspace after realpath and symlink checks. The built-in code index supports TypeScript, TSX, JavaScript, JSX, MJS, and CJS.
+File operations remain inside the selected Workspace after realpath and symlink checks. The built-in code index supports TypeScript/JavaScript, Python, Go, Rust, Java, C/C++, and PHP.
 
 Language servers are managed independently and can be installed or updated on demand. Supported languages include TypeScript/JavaScript, HTML, CSS/SCSS/LESS, Python, JSON, YAML, Markdown, Go, Rust, Java, C, C++, and PHP. Custom LSP definitions can be added for other languages.
 
@@ -68,6 +69,8 @@ Language servers are managed independently and can be installed or updated on de
 - `full`: controlled commands, command sessions, recovery, and complete validation
 
 Commands use an executable name plus an argument array, never an arbitrary shell string. They remain subject to the global command switch, exact allowlist, timeouts, output limits, and high-risk confirmation.
+
+Computer Use is disabled by default and initially available only on local MCP connections in the `full` tier. A separate switch can expose it to authenticated public Workspaces using the `full` tier. Screenshots and desktop input still require explicit MCPort Desktop confirmation for every action.
 
 ## Security
 

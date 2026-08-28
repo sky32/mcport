@@ -2,6 +2,7 @@ import type { z } from 'zod/v4';
 
 export const workspaceNameSchema: z.ZodType<string>;
 export const toolTierSchema: z.ZodType<'readonly' | 'standard' | 'full'>;
+export const highRiskConfirmationModeSchema: z.ZodType<'local' | 'none' | 'none_with_computer_use'>;
 export const workspaceToolTiersSchema: z.ZodType<Record<string, 'readonly' | 'standard' | 'full'>>;
 export const workspaceAllowlistSchema: z.ZodType<string[]>;
 export const positiveIntegerSchema: z.ZodType<number>;

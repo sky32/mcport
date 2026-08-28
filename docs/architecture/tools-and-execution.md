@@ -4,7 +4,7 @@ MCPort 的工具围绕项目开发流程组织，让只读、修改、快速验�
 
 ## 工具目录与档位
 
-工具在服务启动时按档位条件注册：`readonly` 档暴露 23 个读工具，`standard` 增加 9 个写工具，`full` 再增加 3 个命令会话工具，共 35 个。`tools/list` 因此与档位天然一致，该一致性由 `src/tool-tier-smoke.ts` 固定断言。每个工具带 MCP annotations（readonly/safeWrite/write/execution/taskWrite），并注册进 Tool Catalog（含跨档位合并的 `tiers[]`），供 admin API 和 Desktop 调试页使用。
+工具在服务启动时按档位条件注册：`readonly` 档暴露 23 个读工具，`standard` 增加 9 个写工具，`full` 再增加 3 个命令会话工具，共 35 个。开启 Computer Use 后，本地 `full` 档额外注册 `computer_use`；公网 Gateway 只有在独立公网开关开启时才注册。`tools/list` 因此与档位和能力开关天然一致，该一致性由 `src/tool-tier-smoke.ts` 固定断言。每个工具带 MCP annotations（readonly/safeWrite/write/execution/taskWrite），并注册进 Tool Catalog（含跨档位合并的 `tiers[]`），供 admin API 和 Desktop 调试页使用。
 
 工具暴露只由档位决定。历史上存在过的 Tool Surface Profile（core/advanced/full）配置已删除，不再有任何独立的“模型可见面”维度。
 
@@ -20,8 +20,9 @@ MCPort 的工具围绕项目开发流程组织，让只读、修改、快速验�
 
 - 文件工具（stat/read/list/search/view_image）有界执行：默认忽略构建产物目录、2MiB 文件上限、UTF-8 字节输出预算、结果分页
 - 读取文件内容时直接复用 `read_file.sha256`；只有不读取内容而仅需要元数据/哈希时才调用 `stat_file`
-- tree-sitter 代码索引只覆盖 TypeScript/TSX/JavaScript/JSX/MJS/CJS：`repo_map`、`code_search`、`read_symbol`、`find_references`、`impact_analysis`、`project_graph` 的符号级智能仅对这些语言可用；索引存放在独立的 SQLite 数据库并随文件监听/变更标记增量更新
-- `lsp_query` 覆盖 13 种语言；服务器启用条件、解析顺序、TypeScript 运行时选择与不可用行为见 [LSP 语言服务器说明](../lsp.md)
+- tree-sitter 代码索引默认覆盖 TypeScript/TSX/JavaScript/JSX/MJS/CJS、Python、Go、Rust、Java、C/C++ 和 PHP：`repo_map`、`code_search`、`read_symbol`、`find_references`、`impact_analysis`、`project_graph` 的符号级智能会按 Workspace 实际文件动态出现；索引存放在独立的 SQLite 数据库并随文件监听/变更标记增量更新
+- `lsp_query` 覆盖 16 种语言；服务器启用条件、解析顺序、TypeScript 运行时选择与不可用行为见 [LSP 语言服务器说明](../lsp.md)
+- `workspace_context.capabilities.canExecute` 与 `tierCanExecute` 都表示当前工具范围是否提供并允许命令执行；`server_info.runtime.commandExecutionEnabled` 在开发工具范围下为 `true`。命令仍受白名单、联网策略和高风险确认约束。
 
 ## Git 与历史
 
@@ -70,6 +71,8 @@ full 档可以运行允许列表中的命令。执行链：风险评估 → 授�
 - `assessCommandRisk` 分类：依赖变更（npm/pip/cargo 等安装升级）、破坏性命令（reset --hard、clean、checkout --force 等）、网络访问（clone/fetch/push、curl 等）；任一命中即为 high
 - 授权顺序：网络类且禁止外部网络 → deny；非 high 或确认模式 none → allow；high 且需要确认但 Desktop 确认通道未配置 → deny；否则请求本地确认 → confirm
 - 本地确认由 Desktop 轮询并弹原生对话框（60 秒超时视为拒绝）；执行前自动对锁文件或整个 Workspace 建恢复检查点
+
+Computer Use 由 Runtime 暴露工具、Desktop 执行原生动作，两者只通过 Electron Utility Process IPC 通信。能力默认关闭，公网暴露使用独立的默认关闭开关；本地和允许后的公网连接都必须是 `full` 档。`status` 只读取能力状态；截图、点击、拖动、输入、按键和滚动统一按 high risk 处理，默认使用“需要确认”。Workspace 可选择 `none_with_computer_use`（界面名称为“完全静默”）关闭包括 Computer Use 在内的确认。
 
 ## 操作恢复
 

@@ -273,6 +273,12 @@ function summarizeArguments(value: unknown, traceMode: ToolTraceMode): unknown {
   return { keys: Object.keys(value as Record<string, unknown>).filter((key) => !SENSITIVE_KEY.test(key)).sort() };
 }
 
+function redactToolArguments(tool: string, value: unknown): unknown {
+  if (tool !== 'computer_use' || !value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const args = value as Record<string, unknown>;
+  return 'text' in args ? { ...args, text: '[REDACTED]' } : args;
+}
+
 function resultSummary(result: unknown): { bytes: number; isError: boolean; serializationMs: number; error?: string; errorCode?: string; retryable?: boolean } {
   const started = performance.now();
   let serialized = '';
@@ -348,7 +354,7 @@ export async function traceToolCall<T>(input: {
       resultBytes: summary.bytes,
       phases: Object.keys(context.phases).length ? context.phases : undefined,
       resultSerializationMs: summary.serializationMs || undefined,
-      arguments: summarizeArguments(input.arguments, traceMode),
+      arguments: summarizeArguments(redactToolArguments(input.tool, input.arguments), traceMode),
       ...(summary.error ? { error: summary.error } : {}),
       ...(summary.errorCode ? { errorCode: summary.errorCode } : {}),
       ...(summary.retryable !== undefined ? { retryable: summary.retryable } : {}),

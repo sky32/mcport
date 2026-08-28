@@ -9,8 +9,10 @@ export type ManagedLspPackageStatus = { name: string; version: string | null; av
 export type ManagedLspStatus = { root: string; languages: Array<Omit<ManagedLspDefinition, 'packages'> & { installed: boolean; path: string | null; directory: string; version: string | null; packages: ManagedLspPackageStatus[] }> };
 export type ManagedLspProgress = { language: string; phase: 'checking' | 'installing' | 'complete' | 'error'; message: string };
 
+const TYPESCRIPT_RUNTIME_FILES = ['tsserver.js', 'lib.d.ts', 'lib.es5.d.ts', 'lib.es2015.d.ts', 'lib.esnext.d.ts'];
+
 export const MANAGED_LSP_DEFINITIONS: readonly ManagedLspDefinition[] = [
-  { id: 'typescript', label: 'TypeScript / JavaScript', command: 'typescript-language-server', strategy: 'npm', packages: ['typescript-language-server@latest', 'typescript@latest'], description: 'TypeScript 与 JavaScript 语义服务' },
+  { id: 'typescript', label: 'TypeScript / JavaScript', command: 'typescript-language-server', strategy: 'npm', packages: ['@typescript/native-preview@latest'], description: 'TypeScript 与 JavaScript 语义服务' },
   { id: 'html', label: 'HTML', command: 'vscode-html-language-server', strategy: 'npm', packages: ['vscode-langservers-extracted@latest'], description: 'HTML 语言服务' },
   { id: 'css', label: 'CSS / SCSS / LESS', command: 'vscode-css-language-server', strategy: 'npm', packages: ['vscode-langservers-extracted@latest'], description: 'CSS、SCSS 与 LESS 语言服务' },
   { id: 'python', label: 'Python', command: 'pyright-langserver', strategy: 'npm', packages: ['pyright@latest'], description: 'Pyright Python 语言服务' },
@@ -23,6 +25,9 @@ export const MANAGED_LSP_DEFINITIONS: readonly ManagedLspDefinition[] = [
   { id: 'c', label: 'C', command: 'clangd', strategy: 'system', packages: [], description: 'LLVM clangd 语言服务' },
   { id: 'cpp', label: 'C++', command: 'clangd', strategy: 'system', packages: [], description: 'LLVM clangd 语言服务' },
   { id: 'php', label: 'PHP', command: 'intelephense', strategy: 'npm', packages: ['intelephense@latest'], description: 'Intelephense PHP 语言服务' },
+  { id: 'vue', label: 'Vue', command: 'vue-language-server', strategy: 'npm', packages: ['@vue/language-server@latest'], description: 'Vue / Volar 语言服务' },
+  { id: 'bash', label: 'Bash / Shell', command: 'bash-language-server', strategy: 'npm', packages: ['bash-language-server@latest'], description: 'Bash 与 Shell 语言服务' },
+  { id: 'dockerfile', label: 'Dockerfile', command: 'docker-langserver', strategy: 'npm', packages: ['dockerfile-language-server-nodejs@latest'], description: 'Dockerfile 语言服务' },
 ] as const;
 
 function rootPath(userData: string): string { return path.join(userData, 'managed-tools', 'lsp'); }
@@ -81,7 +86,26 @@ async function executablePath(root: string, command: string, runtimePath: string
     const candidate = path.join(entry, process.platform === 'win32' ? `${command}.exe` : command);
     try { await access(candidate, fs.constants.X_OK); return candidate; } catch {}
   }
+  if (command === 'typescript-language-server') {
+    const native = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo');
+    try { await access(native, fs.constants.X_OK); return native; } catch {}
+  }
   return null;
+}
+
+async function hasCompleteTypeScriptRuntime(root: string): Promise<boolean> {
+  const libRoot = path.join(root, 'node_modules', 'typescript', 'lib');
+  try {
+    await Promise.all(TYPESCRIPT_RUNTIME_FILES.map((file) => access(path.join(libRoot, file), fs.constants.R_OK)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function hasTypeScriptNativeRuntime(root: string): Promise<boolean> {
+  const native = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo');
+  try { await access(native, fs.constants.X_OK); return true; } catch { return false; }
 }
 
 async function executableVersion(executable: string | null, definition: ManagedLspDefinition): Promise<string | null> {
@@ -145,7 +169,10 @@ async function statusFor(userData: string, definition: ManagedLspDefinition, run
     return { name, version: await packageVersion(root, name), available: Boolean(await executablePath(root, definition.command, runtimePath)) };
   }));
   const executable = await executablePath(root, definition.command, runtimePath);
-  return { ...definition, installed: Boolean(executable), path: executable, directory: executable ? path.dirname(executable) : root, version: await executableVersion(executable, definition), packages };
+  const runtimeReady = definition.id !== 'typescript'
+    || await hasCompleteTypeScriptRuntime(root)
+    || await hasTypeScriptNativeRuntime(root);
+  return { ...definition, installed: Boolean(executable) && runtimeReady, path: executable, directory: executable ? path.dirname(executable) : root, version: await executableVersion(executable, definition), packages };
 }
 
 export async function managedLspStatus(userData: string, runtimePath = process.env.PATH || ''): Promise<ManagedLspStatus> {
@@ -174,7 +201,12 @@ export async function installManagedLsp(userData: string, languageId: string, ru
   } else throw new Error(`${definition.label} 的自动安装需要 ${definition.command} 或对应工具链；请将其加入 Runtime PATH，或使用自定义 LSP。`);
   const status = await managedLspStatus(userData, runtimePath);
   const result = status.languages.find((item) => item.id === definition.id);
-  if (!result?.installed) throw new Error(`${definition.label} 安装命令已返回成功，但未找到可执行文件 ${definition.command}。请检查安装器输出、系统架构和 Runtime PATH。`);
+  if (!result?.installed) {
+    const detail = definition.id === 'typescript'
+      ? 'TypeScript 运行时不完整（需要 TS7 原生 LSP 或完整的 tsserver 运行时）'
+      : `未找到可执行文件 ${definition.command}`;
+    throw new Error(`${definition.label} 安装命令已返回成功，但${detail}。请重新更新，或检查安装器输出、系统架构和 Runtime PATH。`);
+  }
   await writeFile(path.join(root, 'mcport-managed.json'), `${JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), language: definition.id, packages: result.packages }, null, 2)}\n`, 'utf8');
   onProgress?.({ language: definition.id, phase: 'complete', message: `${definition.label} 已安装或更新` });
   return status;

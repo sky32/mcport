@@ -63,9 +63,13 @@
   "dependencies": {
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
+    "@nut-tree-fork/libnut-darwin": "^2.7.5",
+    "@nut-tree-fork/libnut-linux": "^2.7.5",
+    "@nut-tree-fork/libnut-win32": "^2.7.5",
     "execa": "^10.0.1",
     "glob": "^13.0.6",
     "jose": "^6.1.0",
+    "lucide": "^1.35.0",
     "oidc-provider": "^9.11.2",
     "rate-limiter-flexible": "^11.2.0",
     "tree-sitter-wasms": "0.1.11",
@@ -85,6 +89,10 @@
     "appId": "com.mcport.app",
     "productName": "MCPort",
     "asar": true,
+    "asarUnpack": [
+      "node_modules/@nut-tree-fork/libnut-*/**/*",
+      "node_modules/@nut-tree-fork/node-mac-permissions/**/*"
+    ],
     "directories": {
       "output": "release"
     },

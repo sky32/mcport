@@ -9,7 +9,7 @@ import { MACOS_LOCAL_ONLY_NETWORK_PROFILE } from './runtime.js';
 export type LspKind =
   | 'typescript' | 'html' | 'css'
   | 'python' | 'json' | 'yaml' | 'markdown'
-  | 'go' | 'rust' | 'java' | 'c' | 'cpp' | 'php' | 'custom';
+  | 'go' | 'rust' | 'java' | 'c' | 'cpp' | 'php' | 'vue' | 'bash' | 'dockerfile' | 'custom';
 export type LspOperation = 'diagnostics' | 'hover' | 'definition' | 'source_definition' | 'references' | 'document_symbols';
 export type LspExecutableSource = 'configured-path' | 'workspace' | 'managed' | 'runtime-path';
 
@@ -17,6 +17,7 @@ export type ResolvedLspExecutable = {
   path: string;
   source: LspExecutableSource;
   launchMode: 'direct' | 'embedded-node';
+  launchArgs?: string[];
 };
 
 export type LspRuntimeConfig = {
@@ -50,6 +51,24 @@ type PendingRequest = {
 
 type OpenDocument = { version: number; text: string };
 
+const TYPESCRIPT_NATIVE_COMMAND = process.platform === 'win32' ? 'tsgo.cmd' : 'tsgo';
+
+function phpWorkspaceSettings(root: string): Record<string, unknown> {
+  return {
+    intelephense: {
+      environment: {
+        // Intelephense excludes vendor in some client defaults. Composer
+        // dependencies are part of the selected Workspace's PHP project and
+        // must be available for Laravel/Inertia type resolution.
+        includePaths: [path.join(root, 'vendor')],
+      },
+      files: {
+        exclude: ['**/vendor/**/{Tests,tests}/**'],
+      },
+    },
+  };
+}
+
 const DEFAULT_COMMANDS: Record<LspKind, string> = {
   typescript: 'typescript-language-server',
   html: 'vscode-html-language-server',
@@ -64,7 +83,27 @@ const DEFAULT_COMMANDS: Record<LspKind, string> = {
   c: 'clangd',
   cpp: 'clangd',
   php: 'intelephense',
+  vue: 'vue-language-server',
+  bash: 'bash-language-server',
+  dockerfile: 'docker-langserver',
   custom: '',
+};
+
+// Desktop installs each npm-managed server into a stable language directory.
+// Keep this mapping independent from the executable name: several packages
+// expose a command whose name does not match the language id (for example
+// `intelephense` is installed under `lsp/php`).
+const MANAGED_PACKAGE_IDS: Record<string, string> = {
+  'typescript-language-server': 'typescript',
+  'vscode-html-language-server': 'html',
+  'vscode-css-language-server': 'css',
+  'pyright-langserver': 'python',
+  'vscode-json-language-server': 'json',
+  'yaml-language-server': 'yaml',
+  intelephense: 'php',
+  'vue-language-server': 'vue',
+  'bash-language-server': 'bash',
+  'docker-langserver': 'dockerfile',
 };
 
 const DEFAULT_ARGS: Record<LspKind, string[]> = {
@@ -81,6 +120,9 @@ const DEFAULT_ARGS: Record<LspKind, string[]> = {
   c: ['--stdio'],
   cpp: ['--stdio'],
   php: ['--stdio'],
+  vue: ['--stdio'],
+  bash: ['start'],
+  dockerfile: ['--stdio'],
   custom: [],
 };
 
@@ -129,6 +171,10 @@ const LANGUAGE_IDS: Record<string, { kind: LspKind; languageId: string }> = {
   '.hh': { kind: 'cpp', languageId: 'cpp' },
   '.hxx': { kind: 'cpp', languageId: 'cpp' },
   '.php': { kind: 'php', languageId: 'php' },
+  '.vue': { kind: 'vue', languageId: 'vue' },
+  '.sh': { kind: 'bash', languageId: 'shellscript' },
+  '.bash': { kind: 'bash', languageId: 'shellscript' },
+  '.zsh': { kind: 'bash', languageId: 'shellscript' },
 };
 
 function commandFor(config: LspRuntimeConfig, kind: LspKind): string {
@@ -160,7 +206,7 @@ async function regularFileExists(candidate: string): Promise<boolean> {
 }
 
 function managedPackageRoot(command: string, managedRoot: string): string {
-  const id = command === DEFAULT_COMMANDS.typescript ? 'typescript' : command === DEFAULT_COMMANDS.html ? 'html' : command === DEFAULT_COMMANDS.css ? 'css' : command;
+  const id = MANAGED_PACKAGE_IDS[command] || command;
   return path.join(managedRoot, id);
 }
 
@@ -201,6 +247,10 @@ export async function resolveLspExecutable(
     if (managed && await regularFileExists(managed)) return { path: managed, source: 'managed', launchMode: 'embedded-node' };
     const managedBin = path.join(managedPackageRoot(command, managedRoot), 'node_modules', '.bin', name);
     if (await executableExists(managedBin)) return { path: managedBin, source: 'managed', launchMode: 'direct' };
+    if (command === DEFAULT_COMMANDS.typescript) {
+      const native = path.join(managedPackageRoot(command, managedRoot), 'node_modules', '.bin', TYPESCRIPT_NATIVE_COMMAND);
+      if (await executableExists(native)) return { path: native, source: 'managed', launchMode: 'direct', launchArgs: ['--lsp', '--stdio'] };
+    }
   }
 
   for (const entry of runtimePath.split(path.delimiter).filter(Boolean)) {
@@ -211,6 +261,8 @@ export async function resolveLspExecutable(
 }
 
 function documentKind(relativePath: string, config: LspRuntimeConfig): { kind: LspKind; languageId: string; custom?: CustomLspServer } {
+  const basename = path.basename(relativePath).toLowerCase();
+  if (basename === 'dockerfile' || basename.startsWith('dockerfile.')) return { kind: 'dockerfile', languageId: 'dockerfile' };
   const ext = path.extname(relativePath).toLowerCase();
   const custom = customServers(config).find((server) => server.extensions.map((value) => value.toLowerCase().startsWith('.') ? value.toLowerCase() : `.${value.toLowerCase()}`).includes(ext));
   if (custom) return { kind: 'custom', languageId: custom.languageId, custom };
@@ -224,7 +276,7 @@ export type TypeScriptServerSelection = {
   fallbackPath: string;
   workspaceVersion: string | null;
   managedVersion: string | null;
-  source: 'workspace-compatible' | 'managed' | 'fallback';
+  source: 'workspace-compatible' | 'managed' | 'managed-native' | 'fallback';
   selectedVersion: string | null;
   selectedTsserver: string | null;
   ready: boolean;
@@ -291,6 +343,26 @@ export async function resolveTypeScriptServerOptions(
     };
   }
 
+  const managedNative = managedRoot
+    ? path.join(managedPackageRoot(DEFAULT_COMMANDS.typescript, managedRoot), 'node_modules', '.bin', TYPESCRIPT_NATIVE_COMMAND)
+    : '';
+  if (managedNative && await executableExists(managedNative)) {
+    const nativeVersion = await readPackageVersion(path.join(
+      managedPackageRoot(DEFAULT_COMMANDS.typescript, managedRoot),
+      'node_modules', '@typescript', 'native-preview', 'package.json',
+    ));
+    return {
+      fallbackPath,
+      workspaceVersion,
+      managedVersion: nativeVersion || managedVersion,
+      source: 'managed-native',
+      selectedVersion: nativeVersion || managedVersion,
+      selectedTsserver: null,
+      ready: true,
+      missingRuntimeFiles: [],
+    };
+  }
+
   const health = managedRoot ? await inspectTypeScriptRuntime(managedTsserver) : { ready: false, missingRuntimeFiles: [...TYPESCRIPT_RUNTIME_REQUIRED_FILES] };
   return {
     path: managedRoot ? managedTsserver : undefined,
@@ -319,9 +391,10 @@ type LspSpawnPlan = {
 };
 
 async function lspSpawnPlan(executable: ResolvedLspExecutable, args: string[], config: LspRuntimeConfig): Promise<LspSpawnPlan> {
+  const launchArgs = executable.launchArgs || args;
   const base = executable.launchMode === 'embedded-node'
-    ? { command: process.execPath, args: [executable.path, ...args], embeddedNode: true }
-    : { command: executable.path, args, embeddedNode: false };
+    ? { command: process.execPath, args: [executable.path, ...launchArgs], embeddedNode: true }
+    : { command: executable.path, args: launchArgs, embeddedNode: false };
   if (config.allowExternalNetwork) return base;
   if (process.platform === 'darwin' && await executableExists('/usr/bin/sandbox-exec')) {
     return { command: '/usr/bin/sandbox-exec', args: ['-p', MACOS_LOCAL_ONLY_NETWORK_PROFILE, base.command, ...base.args], embeddedNode: base.embeddedNode };
@@ -422,7 +495,11 @@ class LspSession {
     if (message.id !== undefined && message.method) {
       if (message.method === 'workspace/configuration') {
         const items = Array.isArray(message.params?.items) ? message.params.items : [];
-        this.respond(message.id, items.map(() => null));
+        const settings = this.kind === 'php' ? phpWorkspaceSettings(this.root) : null;
+        this.respond(message.id, items.map((item: { section?: string }) => {
+          if (!settings || !item?.section) return settings;
+          return item.section === 'intelephense' || item.section.startsWith('intelephense.') ? settings.intelephense : null;
+        }));
       } else if (message.method === 'workspace/workspaceFolders') {
         this.respond(message.id, [{ uri: pathToFileURL(this.root).href, name: path.basename(this.root) }]);
       } else {
@@ -488,7 +565,7 @@ class LspSession {
     });
 
     const tsserver = this.kind === 'typescript' ? await resolveTypeScriptServerOptions(this.root, this.config.lspManagedRoot) : null;
-    const initializationOptions = this.kind === 'typescript'
+    const initializationOptions = this.kind === 'typescript' && tsserver?.source !== 'managed-native'
       ? {
           hostInfo: 'mcport',
           disableAutomaticTypingAcquisition: true,
@@ -502,7 +579,7 @@ class LspSession {
         rootUri: pathToFileURL(this.root).href,
         workspaceFolders: [{ uri: pathToFileURL(this.root).href, name: path.basename(this.root) }],
         capabilities: {
-          workspace: { workspaceFolders: true, configuration: false },
+          workspace: { workspaceFolders: true, configuration: this.kind === 'php' },
           textDocument: {
             synchronization: { dynamicRegistration: false, didSave: false },
             publishDiagnostics: { relatedInformation: true },
@@ -515,6 +592,7 @@ class LspSession {
         initializationOptions,
       });
       this.notify('initialized', {});
+      if (this.kind === 'php') this.notify('workspace/didChangeConfiguration', { settings: phpWorkspaceSettings(this.root) });
       this.initialized = true;
     } catch (error) {
       try { child.kill('SIGTERM'); } catch {}
