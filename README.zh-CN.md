@@ -16,6 +16,20 @@ MCPort 是一个本地优先的 MCP 工具。它让 AI 客户端能够在你明�
 
 English version: [README.md](README.md)
 
+## 软件截图
+
+### Workspace 状态与 AI 能力
+
+![MCPort Workspace 状态与 AI 能力](resources/screenshots/workspace-status.png)
+
+### 公网 MCP 与 OAuth 设置
+
+![MCPort 公网 MCP 与 OAuth 设置](resources/screenshots/public-access.png)
+
+### LSP 语言服务器管理
+
+![MCPort LSP 语言服务器管理](resources/screenshots/lsp-management.png)
+
 ## 主要功能
 
 - 让 AI 阅读和搜索项目文件、代码、图片及目录

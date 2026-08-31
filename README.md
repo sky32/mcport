@@ -16,6 +16,20 @@ Project files, runtime state, and credentials stay on your machine by default. Y
 
 中文说明：[README.zh-CN.md](README.zh-CN.md)
 
+## Screenshots
+
+### Workspace status and AI capabilities
+
+![MCPort Workspace status and AI capabilities](resources/screenshots/workspace-status.png)
+
+### Public MCP and OAuth settings
+
+![MCPort public MCP and OAuth settings](resources/screenshots/public-access.png)
+
+### Language server management
+
+![MCPort language server management](resources/screenshots/lsp-management.png)
+
 ## Features
 
 - Read and search project files, source code, images, and directories
