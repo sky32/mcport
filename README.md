@@ -16,6 +16,8 @@ Project files, runtime state, and credentials stay on your machine by default. Y
 
 中文说明：[README.zh-CN.md](README.zh-CN.md)
 
+Community: [Linux.do](https://linux.do/)
+
 ## Screenshots
 
 ### Workspace status and AI capabilities

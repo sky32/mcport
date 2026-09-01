@@ -16,6 +16,8 @@ MCPort 是一个本地优先的 MCP 工具。它让 AI 客户端能够在你明�
 
 English version: [README.md](README.md)
 
+社区交流：[Linux.do](https://linux.do/)
+
 ## 软件截图
 
 ### Workspace 状态与 AI 能力
