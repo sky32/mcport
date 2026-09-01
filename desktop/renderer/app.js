@@ -575,7 +575,14 @@ async function removeWorkspace(workspace) {
   const prompt = t('workspace.removeConfirm', { name: workspace.name, path: workspace.path });
   if (!confirm(prompt)) return;
   try {
+    if (editingWorkspaceName === workspace.name) {
+      closeWorkspaceSettingsModal();
+    }
     const next = await window.desktop.removeWorkspace(workspace.name);
+    // Desktop state updates can arrive before the follow-up listWorkspaces call.
+    // Update the render cache only after deletion succeeds so a failed request
+    // cannot make the Workspace disappear from the UI.
+    workspaceListCache = workspaceListCache.filter((item) => item.name !== workspace.name);
     render(next);
     runtimeAdmin = null;
     await loadRuntimeAdmin();
@@ -913,6 +920,10 @@ function setWorkspaceExpandControl(workspaceName, expanded) {
 
 function closeWorkspaceSettingsModal() {
   const panel = $('workspaceSettingsModal');
+  if (!panel) {
+    editingWorkspaceName = null;
+    return;
+  }
   document.querySelectorAll('.workspace-item.settings-expanded').forEach((card) => card.classList.remove('settings-expanded'));
   panel.classList.remove('show');
   panel.classList.add('ui-hidden');
@@ -925,6 +936,7 @@ function closeWorkspaceSettingsModal() {
 async function openWorkspaceSettingsModal(workspace) {
   if (!workspace?.name) return;
   const panel = $('workspaceSettingsModal');
+  if (!panel) return;
   const currentCard = Array.from(document.querySelectorAll('.workspace-item')).find((card) => card.dataset.workspaceName === workspace.name);
   if (editingWorkspaceName === workspace.name && panel.classList.contains('show') && panel.parentElement === currentCard) {
     closeWorkspaceSettingsModal();
@@ -1965,10 +1977,12 @@ async function setWorkspaceMcpEnabled(workspace, enabled, control) {
 function renderWorkspaceManagement(workspaces) {
   const list = $('workspaceList');
   const inlinePanel = $('workspaceSettingsModal');
+  if (!list || !inlinePanel) return;
+  const visibleWorkspaces = Array.isArray(workspaces) ? workspaces : [];
   const expandedWorkspace = inlinePanel.classList.contains('show') ? editingWorkspaceName : null;
   if (inlinePanel.parentElement?.classList.contains('workspace-item')) inlinePanel.remove();
   list.replaceChildren();
-  if (!workspaces.length) {
+  if (!visibleWorkspaces.length) {
     inlinePanel.classList.add('ui-hidden');
     document.body.appendChild(inlinePanel);
     list.appendChild(makeEmptyState({
@@ -1981,7 +1995,7 @@ function renderWorkspaceManagement(workspaces) {
   }
 
   let restoredExpandedPanel = false;
-  for (const workspace of workspaces) {
+  for (const workspace of visibleWorkspaces) {
     const service = state?.settings.workspaceServices.find((item) => item.workspace === workspace.name) || null;
     const serviceEnabled = service?.enabled !== false;
     const expanded = expandedWorkspace === workspace.name;
@@ -2047,7 +2061,10 @@ function renderWorkspaceManagement(workspaces) {
     remove.setAttribute('aria-label', t('workspace.removeLabel', { name: workspace.name }));
     remove.dataset.icon = 'trash';
     remove.textContent = t('workspace.deleteButton');
-    remove.addEventListener('click', () => removeWorkspace(workspace));
+    remove.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void removeWorkspace(workspace);
+    });
     actions.append(changeDirectory, remove);
     top.append(master, info, actions);
     hydrateIcons(top);
@@ -2609,7 +2626,7 @@ $('regenerateWorkspaceOauthSecretButton').addEventListener('click', async () => 
 document.addEventListener('keydown', (event) => {
   const modifier = event.metaKey || event.ctrlKey;
   if (event.key === 'Escape') {
-    if ($('workspaceSettingsModal').classList.contains('show')) closeWorkspaceSettingsModal();
+    if ($('workspaceSettingsModal')?.classList.contains('show')) closeWorkspaceSettingsModal();
   }
   if (modifier && event.key === ',') {
     event.preventDefault();
@@ -2618,7 +2635,7 @@ document.addEventListener('keydown', (event) => {
   }
   if (modifier && event.key.toLowerCase() === 's') {
     event.preventDefault();
-    if ($('workspaceSettingsModal').classList.contains('show')) {
+    if ($('workspaceSettingsModal')?.classList.contains('show')) {
       $('saveCurrentWorkspaceButton').click();
     } else if (formDirty) {
       $('saveSettingsButton').click();
