@@ -16,13 +16,27 @@ const catalog = new Set(
 const keyedNames = new Set([...i18n.matchAll(/['"]([\w.-]+)['"]\s*:\s*\[/gu)].map((match) => match[1]));
 const failures = [];
 
+function removeMatchedRanges(value, pattern, replacement) {
+  let output = '';
+  let cursor = 0;
+  for (const match of value.matchAll(pattern)) {
+    const start = match.index ?? cursor;
+    output += value.slice(cursor, start);
+    output += replacement(match);
+    cursor = start + match[0].length;
+  }
+  return output + value.slice(cursor);
+}
+
 // Keep this check dependency-free: the renderer is intentionally offline and
 // does not ship a DOM parser just for build-time validation.
 const allTextChunks = [];
 for (const { file, html } of htmlDocuments) {
-  const withoutIgnoredTags = html
-    .replace(/<(script|style|textarea)[^>]*>[\s\S]*?<\/\1>/giu, '')
-    .replace(/<code[^>]*>([\s\S]*?)<\/code>/giu, '$1');
+  const withoutIgnoredTags = removeMatchedRanges(
+    removeMatchedRanges(html, /<(script|style|textarea)[^>]*>[\s\S]*?<\/\1>/giu, () => ''),
+    /<code[^>]*>([\s\S]*?)<\/code>/giu,
+    (match) => match[1] ?? '',
+  );
   const textChunks = [...withoutIgnoredTags.matchAll(/>([^<>]+)</gu)]
     .map((match) => match[1].replace(/\s+/gu, ' ').trim())
     .filter(hasHan);

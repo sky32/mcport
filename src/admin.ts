@@ -194,7 +194,8 @@ export async function handleAdminRequest(req: IncomingMessage, res: ServerRespon
       return true;
     }
   } catch (error) {
-    json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    console.error('[admin] request failed', error);
+    json(res, 400, { error: 'invalid_request' });
     return true;
   }
 

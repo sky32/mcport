@@ -238,7 +238,8 @@ async function createServiceRuntime(service: McpServiceDefinition) {
             await resolveConfiguredWorkspace(config, workspace);
           } catch (error) {
             workspaceReady = false;
-            workspaceError = error instanceof Error ? error.message : String(error);
+            console.error('[health] Workspace resolution failed', error);
+            workspaceError = 'Workspace unavailable';
           }
         }
         res.writeHead(workspaceReady ? 200 : 503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -288,12 +289,13 @@ async function createServiceRuntime(service: McpServiceDefinition) {
       if (!(await mcpAuth.authenticate(req, res))) return;
       await nodeHandler(req, res);
     })().catch((error) => {
+      console.error('[http] request handler failed', error);
       if (res.headersSent) {
         res.end();
         return;
       }
       res.writeHead(500, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+      res.end(JSON.stringify({ error: 'internal_error' }));
     });
   });
 
@@ -320,7 +322,8 @@ installRuntimeControlHandler(async (method, params) => {
         await resolveConfiguredWorkspace(config, workspace);
       } catch (error) {
         workspaceReady = false;
-        workspaceError = error instanceof Error ? error.message : String(error);
+        console.error('[runtime-control] Workspace resolution failed', error);
+        workspaceError = 'Workspace unavailable';
       }
     }
     return {

@@ -28,6 +28,18 @@ await mkdir(dataDir, { recursive: true });
 await mkdir(workspaceRoot, { recursive: true });
 const port = await freePort();
 
+function containsGithubApiUrl(value) {
+  for (const match of value.matchAll(/https?:\/\/[^\s"'<>]+/gu)) {
+    try {
+      const url = new URL(match[0]);
+      if (url.protocol === 'https:' && url.hostname === 'api.github.com') return true;
+    } catch {
+      // The smoke only needs to detect valid URLs; unrelated log fragments are ignored.
+    }
+  }
+  return false;
+}
+
 await writeFile(path.join(dataDir, 'desktop-settings.json'), `${JSON.stringify({
   settingsVersion: 19,
   workspaceRoot,
@@ -64,7 +76,7 @@ try {
   }
   if (!stderr.includes('Tunnel start failed:')) throw new Error(`Expected tunnel preflight failure was not observed\n${stderr}`);
   if (!stderr.includes('尚未安装 cloudflared')) throw new Error(`Missing managed-client guidance was not emitted\n${stderr}`);
-  if (stderr.includes('api.github.com') || stderr.includes('正在下载并校验 cloudflared')) throw new Error(`Tunnel start attempted an implicit managed-client download\n${stderr}`);
+  if (containsGithubApiUrl(stderr) || stderr.includes('正在下载并校验 cloudflared')) throw new Error(`Tunnel start attempted an implicit managed-client download\n${stderr}`);
   await new Promise((resolve) => setTimeout(resolve, 1_500));
   if (stderr.includes('Tunnel auto-recovery scheduled')) throw new Error(`Tunnel preflight failure incorrectly scheduled recovery\n${stderr}`);
   if ((stderr.match(/Tunnel start failed:/g) || []).length !== 1) throw new Error(`Tunnel preflight failure was retried unexpectedly\n${stderr}`);
