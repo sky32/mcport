@@ -282,8 +282,13 @@ let tunnelRecoveryTimer: NodeJS.Timeout | null = null;
 let tunnelRecoveryResetTimer: NodeJS.Timeout | null = null;
 let tunnelRecoveryAttempt = 0;
 const TUNNEL_STABLE_RESET_MS = 60_000;
+const TUNNEL_HEALTH_FAILURE_THRESHOLD = 2;
+const TUNNEL_HEALTH_REBUILD_COOLDOWN_MS = 60_000;
 let tunnelDesiredRunning = false;
 let tunnelAutostartSuppressed = false;
+let tunnelHealthFailureCount = 0;
+let tunnelHealthLastRebuildAt = 0;
+let tunnelHealthRebuildPromise: Promise<void> | null = null;
 let localConfirmationPollTimer: NodeJS.Timeout | null = null;
 let oauthInteractionPollTimer: NodeJS.Timeout | null = null;
 const localConfirmationToken = randomBytes(32).toString('base64url');
@@ -2163,6 +2168,64 @@ function publicAccessReady(): boolean {
   return !tryCloudflareReadinessPending();
 }
 
+function isTransientFrpHealthFailure(probe: HealthProbeResult): boolean {
+  if (probe.ok || probe.status !== 'unhealthy') return false;
+  // HTTP 4xx normally means an authentication or routing configuration issue;
+  // rebuilding frpc cannot fix those and would only add more noise.
+  return probe.httpStatus === null || probe.httpStatus >= 500;
+}
+
+async function rebuildFrpAfterHealthFailure(results: WorkspaceHealthResult[]): Promise<void> {
+  if (
+    settings.publicAccessProvider !== 'frp'
+    || !tunnelDesiredRunning
+    || tunnelState.phase !== 'running'
+    || !tunnelProcess
+  ) {
+    tunnelHealthFailureCount = 0;
+    return;
+  }
+
+  const publicResults = results.filter((result) => {
+    const service = settings.workspaceServices.find((item) => item.workspace === result.workspace);
+    return service?.enabled && service.publicEnabled;
+  });
+  if (!publicResults.length || publicResults.some((result) => result.local.status !== 'healthy')) {
+    tunnelHealthFailureCount = 0;
+    return;
+  }
+
+  if (publicResults.every((result) => result.public.ok)) {
+    tunnelHealthFailureCount = 0;
+    return;
+  }
+  if (!publicResults.every((result) => isTransientFrpHealthFailure(result.public))) return;
+
+  tunnelHealthFailureCount += 1;
+  if (tunnelHealthFailureCount < TUNNEL_HEALTH_FAILURE_THRESHOLD) return;
+  if (tunnelHealthRebuildPromise || Date.now() - tunnelHealthLastRebuildAt < TUNNEL_HEALTH_REBUILD_COOLDOWN_MS) return;
+
+  tunnelHealthFailureCount = 0;
+  tunnelHealthLastRebuildAt = Date.now();
+  tunnelHealthRebuildPromise = (async () => {
+    appendLog('desktop', 'FRP public health checks failed repeatedly; rebuilding the client session');
+    const shouldRestart = tunnelDesiredRunning;
+    try {
+      await stopTunnel();
+      if (shouldRestart && !isQuitting) {
+        tunnelAutostartSuppressed = false;
+        await startTunnel(true);
+      }
+    } catch (error) {
+      appendLog('desktop', `FRP health rebuild failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (tunnelDesiredRunning) scheduleTunnelRecovery(error instanceof Error ? error.message : String(error));
+    } finally {
+      tunnelHealthRebuildPromise = null;
+    }
+  })();
+  await tunnelHealthRebuildPromise;
+}
+
 function healthUrlFromEndpoint(endpoint: string): string {
   const target = new URL(endpoint);
   target.pathname = target.pathname.endsWith('/mcp')
@@ -2271,7 +2334,7 @@ async function probeHealthUrl(url: string, expectedServiceId?: string): Promise<
 
 async function checkWorkspaceHealth(): Promise<WorkspaceHealthResult[]> {
   const services = settings.workspaceServices.filter((service) => service.enabled);
-  return Promise.all(services.map(async (service) => {
+  const results = await Promise.all(services.map(async (service) => {
     const localEndpoint = workspaceLocalEndpoint(service);
     const publicEndpoint = workspacePublicEndpoint(service);
     let local = runtimeState.phase === 'running'
@@ -2301,6 +2364,10 @@ async function checkWorkspaceHealth(): Promise<WorkspaceHealthResult[]> {
     }
     return { workspace: service.workspace, local, public: clarifyPublicHealthProbe(deepPublic) };
   }));
+  void rebuildFrpAfterHealthFailure(results).catch((error) => {
+    appendLog('desktop', `FRP health recovery task failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  return results;
 }
 
 async function checkPublicAccessConfiguration(): Promise<PublicAccessCheckResult> {
