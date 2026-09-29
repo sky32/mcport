@@ -73,7 +73,7 @@
     "oidc-provider": "^9.11.2",
     "rate-limiter-flexible": "^11.2.0",
     "tree-sitter-wasms": "0.1.11",
-    "undici": "^7.29.0",
+    "undici": "^7.30.0",
     "web-tree-sitter": "^0.20.8",
     "zod": "^4.0.0"
   },
