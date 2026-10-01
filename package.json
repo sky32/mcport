@@ -61,26 +61,26 @@
     "smoke:core-lsp": "npm run build && node scripts/core-lsp-resolution-smoke.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.1.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@nut-tree-fork/libnut-darwin": "^2.7.5",
     "@nut-tree-fork/libnut-linux": "^2.7.5",
     "@nut-tree-fork/libnut-win32": "^2.7.5",
     "execa": "^10.0.1",
     "glob": "^13.0.6",
-    "jose": "^6.1.0",
-    "lucide": "^1.35.0",
-    "oidc-provider": "^9.11.2",
-    "rate-limiter-flexible": "^11.2.0",
-    "tree-sitter-wasms": "0.1.11",
-    "undici": "^7.29.0",
-    "web-tree-sitter": "^0.20.8",
-    "zod": "^4.0.0"
+    "jose": "^6.2.12",
+    "lucide": "^1.48.0",
+    "oidc-provider": "^9.12.2",
+    "rate-limiter-flexible": "^11.2.1",
+    "tree-sitter-wasms": "0.1.13",
+    "undici": "^8.11.2",
+    "web-tree-sitter": "^0.27.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^24.0.0",
-    "@types/oidc-provider": "^9.11.1",
+    "@types/oidc-provider": "^9.12.1",
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
     "typescript": "^7.0.2"
