@@ -67,7 +67,7 @@
     "@nut-tree-fork/libnut-linux": "^2.7.5",
     "@nut-tree-fork/libnut-win32": "^2.7.5",
     "execa": "^10.0.1",
-    "glob": "^13.0.6",
+    "glob": "^14.0.2",
     "jose": "^6.1.0",
     "lucide": "^1.35.0",
     "oidc-provider": "^9.11.2",
